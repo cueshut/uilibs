@@ -1,3 +1,5 @@
+
+
 local library = {
     toggled = true;
     binding = false;
@@ -2265,3 +2267,81 @@ local function startsettings()
 end
 
 local savedsettings = startsettings()
+
+local main = library:createWindow("not hattori")
+local tab1 = main:newTab("Main")
+
+local toggles = {
+    gay = false,
+    notgay = false
+}
+
+tab1:toggle(
+    "gay",
+    {
+        location = nil,
+        flag = "no?",
+        default = toggles.gay
+    },
+    false,
+    {},
+    function(state)
+        toggles.gay = print(state)
+    end
+)
+local listing = {
+    {Name = "hi"},
+    {Name = "Colosseum"},
+    {Name = "Island Of Zou"},
+    {Name = "Sphinx Island"},
+    {Name = "Arlong Park"},
+    {Name = "Restaurant Baratie"},
+    {Name = "Town of Beginnings"},
+    {Name = "Shell's Town"}
+}
+
+tab1:dropdown(
+    "Selected Quest",
+    false,
+    {
+        location = nil,
+        flag = "",
+        list = listing, -- listing
+        default = "hewo"
+    },
+    function(v)
+        print(v) --print
+    end
+)
+
+tab1:slider(
+    "WalkSpeed",
+    {
+        location = nil,
+        flag = "",
+        min = 1,
+        max = 300,
+        default = 0 -- default idk
+    },
+    function(v)
+        game.Players.LocalPlayer.Character.Humanoid.WalkSpeed = v
+    end,
+    false,
+    {}
+)
+
+tab1:button(
+    "why did i do this? idk",
+    function()
+        print("yukiho is not a wtink")
+    end
+)
+
+
+library:notify(
+    "testicle", --name of notification
+    "voch im gay", --text
+    15 -- expire time
+)
+
+
