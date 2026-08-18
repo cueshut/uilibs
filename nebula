@@ -16,7 +16,7 @@ local TweenService = game:GetService("TweenService")
 local UserInputService = game:GetService("UserInputService")
 
 local NebulaUI = {}
-NebulaUI.Version = "1.9.0"
+NebulaUI.Version = "1.12.0"
 NebulaUI.GuiName = "NebulaUI"
 
 -- =====================================================================
@@ -158,6 +158,34 @@ local THEMES = {
 		Header = Color3.fromRGB(12, 20, 17),
 		Layers = { Color3.fromRGB(12, 20, 17), Color3.fromRGB(15, 25, 21) },
 		Popup = Color3.fromRGB(17, 28, 24),
+	},
+	Violet = {
+		Accent = Color3.fromRGB(178, 132, 255),
+		Panel = Color3.fromRGB(13, 11, 18),
+		Header = Color3.fromRGB(17, 14, 24),
+		Layers = { Color3.fromRGB(17, 14, 24), Color3.fromRGB(21, 17, 29) },
+		Popup = Color3.fromRGB(25, 20, 33),
+	},
+	Ocean = {
+		Accent = Color3.fromRGB(84, 190, 235),
+		Panel = Color3.fromRGB(9, 13, 17),
+		Header = Color3.fromRGB(12, 17, 22),
+		Layers = { Color3.fromRGB(12, 17, 22), Color3.fromRGB(15, 21, 27) },
+		Popup = Color3.fromRGB(18, 25, 32),
+	},
+	Amber = {
+		Accent = Color3.fromRGB(235, 178, 84),
+		Panel = Color3.fromRGB(16, 12, 9),
+		Header = Color3.fromRGB(21, 16, 12),
+		Layers = { Color3.fromRGB(21, 16, 12), Color3.fromRGB(26, 20, 15) },
+		Popup = Color3.fromRGB(30, 23, 18),
+	},
+	Mono = {
+		Accent = Color3.fromRGB(228, 228, 232),
+		Panel = Color3.fromRGB(12, 12, 13),
+		Header = Color3.fromRGB(16, 16, 17),
+		Layers = { Color3.fromRGB(16, 16, 17), Color3.fromRGB(20, 20, 21) },
+		Popup = Color3.fromRGB(23, 23, 24),
 	},
 }
 
@@ -905,8 +933,42 @@ function NebulaUI:CreateWindow(options)
 	window._layers = {
 		panels = layer("Panels", 1),
 		popups = layer("Popups", 5),
+		overlays = layer("Overlays", 7),
 		tooltips = layer("Tooltips", 9),
 	}
+
+	-- Top-right corner: the active module list. Bottom-right: notifications.
+	local moduleList = new("Frame", {
+		Name = "ModuleList",
+		AnchorPoint = Vector2.new(1, 0),
+		AutomaticSize = Enum.AutomaticSize.Y,
+		BackgroundTransparency = 1,
+		BorderSizePixel = 0,
+		Position = UDim2.new(1, -METRICS.Margin, 0, METRICS.Margin),
+		Size = UDim2.new(0, 260, 0, 0),
+		Visible = options.ModuleList ~= false,
+		Parent = window._layers.overlays,
+	})
+	local moduleLayout = vlist(moduleList, 2)
+	moduleLayout.HorizontalAlignment = Enum.HorizontalAlignment.Right
+
+	local notices = new("Frame", {
+		Name = "Notifications",
+		AnchorPoint = Vector2.new(1, 1),
+		AutomaticSize = Enum.AutomaticSize.Y,
+		BackgroundTransparency = 1,
+		BorderSizePixel = 0,
+		Position = UDim2.new(1, -METRICS.Margin, 1, -METRICS.Margin),
+		Size = UDim2.new(0, 250, 0, 0),
+		Parent = window._layers.overlays,
+	})
+	local noticeLayout = vlist(notices, 8)
+	noticeLayout.HorizontalAlignment = Enum.HorizontalAlignment.Right
+	noticeLayout.VerticalAlignment = Enum.VerticalAlignment.Bottom
+
+	window._moduleList = moduleList
+	window._notices = notices
+	window._noticeOrder = 0
 
 	local area = window._layers.panels.AbsoluteSize
 	local startX, startY = resolveOffsets(
@@ -945,6 +1007,11 @@ function NebulaUI:CreateWindow(options)
 			return
 		end
 	end))
+
+	-- the module list is recoloured with every accent or theme change
+	window:BindAccent(window._registry, function()
+		window:_refreshModules()
+	end)
 
 	return window
 end
@@ -1077,6 +1144,12 @@ function Window:SetTheme(name)
 				end
 				node:SetAttribute(BASE_COLOR, base)
 				node.BackgroundColor3 = base
+			elseif role == "Field" then
+				-- buttons, dropdown fields, chips and text boxes sit one step above
+				-- their layer, so they follow the theme like everything else
+				local base = shade(layerColor(node:GetAttribute("NebulaDepth") or 0), 0.03)
+				node:SetAttribute(BASE_COLOR, base)
+				node.BackgroundColor3 = base
 			end
 		end
 	end
@@ -1084,6 +1157,203 @@ function Window:SetTheme(name)
 	if theme.Accent then
 		self:SetAccent(theme.Accent)
 	end
+	return self
+end
+
+function Window:SetModuleListVisible(visible)
+	if self._moduleList then
+		self._moduleList.Visible = visible and true or false
+	end
+	return self
+end
+
+function Window:IsModuleListVisible()
+	return self._moduleList and self._moduleList.Visible or false
+end
+
+-- Rebuilds the top-right list from every feature row that is switched on.
+function Window:_refreshModules()
+	local holder = self._moduleList
+	if not holder then
+		return
+	end
+	for _, child in ipairs(holder:GetChildren()) do
+		if child:IsA("GuiObject") then
+			child:Destroy()
+		end
+	end
+	if not holder.Visible then
+		return
+	end
+
+	local function escapeRich(text)
+		return (tostring(text):gsub("&", "&amp;"):gsub("<", "&lt;"):gsub(">", "&gt;"))
+	end
+
+	local accentHex = string.sub(colorToHex(self.Accent, 1), 1, 7)
+	local mutedHex = string.sub(colorToHex(shade(self.Accent, -0.45), 1), 1, 7)
+	local order = 0
+	for _, panel in ipairs(self.Panels) do
+		for _, feature in ipairs(panel._features or {}) do
+			if feature:Get() and feature.Label then
+				order += 1
+
+				local entry = new("Frame", {
+					Name = "Module",
+					BackgroundTransparency = 1,
+					BorderSizePixel = 0,
+					LayoutOrder = order,
+					Size = UDim2.new(1, 0, 0, METRICS.LabelHeight - 2),
+					Parent = holder,
+				})
+
+				local text = '<font color="' .. accentHex .. '">' .. escapeRich(feature.Label.Text) .. "</font>"
+				if feature._badge then
+					-- a dimmer accent suffix, like the "100 ms" readouts in the reference
+					text ..= ' <font color="' .. mutedHex .. '">' .. escapeRich(feature._badge) .. "</font>"
+				end
+
+				-- a soft accent ghost behind the sharp line reads as a glow, and
+				-- both layers fade in whenever the list rebuilds
+				local ghost = makeText({
+					Name = "Glow",
+					Font = METRICS.FontMedium,
+					Size = UDim2.new(1, 0, 1, 0),
+					Text = text,
+					TextSize = METRICS.SmallTextSize,
+					TextTransparency = 1,
+					TextXAlignment = Enum.TextXAlignment.Right,
+					Parent = entry,
+				})
+				ghost.RichText = true
+
+				local line = makeText({
+					Name = "Text",
+					Font = METRICS.FontMedium,
+					Size = UDim2.new(1, 0, 1, 0),
+					Text = text,
+					TextSize = METRICS.SmallTextSize,
+					TextTransparency = 1,
+					TextXAlignment = Enum.TextXAlignment.Right,
+					Parent = entry,
+				})
+				line.RichText = true
+
+				tween(ghost, ANIM.Normal, { TextTransparency = 0.78 })
+				tween(line, ANIM.Normal, { TextTransparency = 0 })
+			end
+		end
+	end
+end
+
+-- A themed notification card with a tweening expire bar, stacked bottom-right.
+function Window:Notify(options)
+	options = type(options) == "table" and options or {}
+	local holder = self._notices
+	if not holder then
+		return self
+	end
+
+	local registry = Registry.new()
+	self._registry:Add(function()
+		registry:Destroy()
+	end)
+
+	local duration = math.clamp(tonumber(options.Duration) or 4, 0.5, 30)
+	self._noticeOrder = (self._noticeOrder or 0) + 1
+
+	-- a CanvasGroup lets the whole card fade in and out as one unit
+	local card = new("CanvasGroup", {
+		Name = "Notice",
+		AutomaticSize = Enum.AutomaticSize.Y,
+		BackgroundColor3 = PALETTE.Popup,
+		BorderSizePixel = 0,
+		GroupTransparency = 1,
+		LayoutOrder = self._noticeOrder,
+		Size = UDim2.new(1, 0, 0, 0),
+		Parent = holder,
+	})
+	corner(card, METRICS.SmallCorner)
+	stroke(card, PALETTE.Border)
+	card:SetAttribute("NebulaRole", "Popup")
+	registry:Add(card)
+
+	pad(card, 8, 10, 7, 10)
+	vlist(card, 5)
+
+	local titleLabel = makeText({
+		Name = "Title",
+		Font = METRICS.FontMedium,
+		LayoutOrder = 1,
+		Size = UDim2.new(1, 0, 0, METRICS.LabelHeight - 4),
+		Text = tostring(options.Title or "Notice"),
+		TextSize = METRICS.SmallTextSize,
+		Parent = card,
+	})
+
+	if options.Content ~= nil then
+		makeText({
+			Name = "Content",
+			AutomaticSize = Enum.AutomaticSize.Y,
+			LayoutOrder = 2,
+			Size = UDim2.new(1, 0, 0, 0),
+			Text = tostring(options.Content),
+			TextColor3 = PALETTE.SubText,
+			TextSize = METRICS.SmallTextSize,
+			TextTruncate = Enum.TextTruncate.None,
+			TextWrapped = true,
+			Parent = card,
+		})
+	end
+
+	-- the expire bar drains over the duration, then the card fades out
+	local barTrack = new("Frame", {
+		Name = "ExpireTrack",
+		BackgroundColor3 = PALETTE.BorderSoft,
+		BackgroundTransparency = 0.4,
+		BorderSizePixel = 0,
+		LayoutOrder = 3,
+		Size = UDim2.new(1, 0, 0, 3),
+		Parent = card,
+	})
+	corner(barTrack, 2)
+
+	local barFill = new("Frame", {
+		Name = "Fill",
+		BackgroundColor3 = self.Accent,
+		BorderSizePixel = 0,
+		Size = UDim2.fromScale(1, 1),
+		Parent = barTrack,
+	})
+	corner(barFill, 2)
+
+	-- themed live: title and bar follow the accent, the card follows Popup
+	window:BindAccent(registry, function(accent)
+		titleLabel.TextColor3 = shade(accent, 0.2)
+		barFill.BackgroundColor3 = accent
+	end)
+
+	local dismissed = false
+	local function dismiss()
+		if dismissed or not card.Parent then
+			return
+		end
+		dismissed = true
+		tween(card, ANIM.Normal, { GroupTransparency = 1 })
+		task.delay(ANIM.Normal + 0.05, function()
+			registry:Destroy()
+		end)
+	end
+
+	tween(card, ANIM.Normal, { GroupTransparency = 0 })
+	local drain = TweenService:Create(
+		barFill,
+		TweenInfo.new(duration, Enum.EasingStyle.Linear),
+		{ Size = UDim2.fromScale(0, 1) }
+	)
+	registry:Add(drain.Completed:Connect(dismiss))
+	drain:Play()
+
 	return self
 end
 
@@ -2143,6 +2413,7 @@ end
 function Container:Feature(text, default, callback)
 	local element, holder, registry = baseElement(self, "Feature")
 	local panel = self.panel
+	local window = self.window
 	local value = default == true
 	local hovered = false
 
@@ -2183,29 +2454,44 @@ function Container:Feature(text, default, callback)
 		return PALETTE.SubText
 	end
 
+	local baseColor = row.BackgroundColor3
+	row:SetAttribute(BASE_COLOR, baseColor)
+
+	-- active modules carry a faint wash of the theme accent; the resting base
+	-- attribute stays untouched so theme repaints and hover math keep working
+	local function restColor()
+		local base = row:GetAttribute(BASE_COLOR) or baseColor
+		if value then
+			return base:Lerp(window.Accent, 0.14)
+		end
+		return base
+	end
+
 	local function applyVisual(animate)
+		local target = hovered and shade(restColor(), 0.08) or restColor()
 		if animate == false then
 			label.TextColor3 = labelColor()
+			row.BackgroundColor3 = target
 		else
 			tween(label, ANIM.Normal, { TextColor3 = labelColor() })
+			tween(row, ANIM.Normal, { BackgroundColor3 = target })
 		end
 		chevron:SetColor(value and PALETTE.SubText or PALETTE.Muted)
 	end
 
-	local baseColor = row.BackgroundColor3
-	local hoverColor = shade(baseColor, 0.08)
-	row:SetAttribute(BASE_COLOR, baseColor)
+	window:BindAccent(registry, function()
+		applyVisual(false)
+	end)
 
 	registry:Add(row.MouseEnter:Connect(function()
 		hovered = true
-		local base = row:GetAttribute(BASE_COLOR) or baseColor
-		tween(row, ANIM.Fast, { BackgroundColor3 = shade(base, 0.08) })
+		tween(row, ANIM.Fast, { BackgroundColor3 = shade(restColor(), 0.08) })
 		applyVisual(true)
 	end))
 
 	registry:Add(row.MouseLeave:Connect(function()
 		hovered = false
-		tween(row, ANIM.Fast, { BackgroundColor3 = row:GetAttribute(BASE_COLOR) or baseColor })
+		tween(row, ANIM.Fast, { BackgroundColor3 = restColor() })
 		applyVisual(true)
 	end))
 
@@ -2214,6 +2500,9 @@ function Container:Feature(text, default, callback)
 		applyVisual(animate)
 		if panel and panel._refreshCounter then
 			panel:_refreshCounter()
+		end
+		if window and window._refreshModules then
+			window:_refreshModules()
 		end
 		if not silent then
 			invoke(callback, value)
@@ -2261,6 +2550,18 @@ function Container:Feature(text, default, callback)
 
 	function element:SetText(newText)
 		label.Text = tostring(newText or "")
+		if window and window._refreshModules then
+			window:_refreshModules()
+		end
+		return self
+	end
+
+	-- a dimmed suffix shown after the name in the module list, e.g. "100 ms"
+	function element:SetBadge(badge)
+		element._badge = badge ~= nil and tostring(badge) or nil
+		if window and window._refreshModules then
+			window:_refreshModules()
+		end
 		return self
 	end
 
@@ -2270,7 +2571,14 @@ function Container:Feature(text, default, callback)
 		panel:_trackFeature(element)
 		registry:Add(function()
 			panel:_untrackFeature(element)
+			if window and window._refreshModules then
+				window:_refreshModules()
+			end
 		end)
+	end
+
+	if window and window._refreshModules then
+		window:_refreshModules()
 	end
 
 	return element
@@ -2320,7 +2628,7 @@ function Container:Toggle(text, default, callback)
 	local function applyVisual(animate)
 		local accent = window.Accent
 		local trackColor = value and accent or self:_fieldColor()
-		local knobColor = value and Color3.fromRGB(248, 248, 252) or PALETTE.Knob
+		local knobColor = value and shade(accent, 0.78) or PALETTE.Knob
 		local knobOffset = value and 21 or 2
 		if animate == false then
 			track.BackgroundColor3 = trackColor
@@ -2404,6 +2712,8 @@ function Container:Button(text, callback)
 	})
 	corner(button, METRICS.SmallCorner)
 	stroke(button, PALETTE.BorderSoft)
+	button:SetAttribute("NebulaRole", "Field")
+	button:SetAttribute("NebulaDepth", self:_depth())
 	bindHover(button, registry, self:_fieldColor(), self:_fieldHover())
 
 	registry:Add(button.MouseButton1Click:Connect(function()
@@ -2464,6 +2774,8 @@ function Container:Buttons(entries)
 		})
 		corner(button, METRICS.SmallCorner)
 		stroke(button, PALETTE.BorderSoft)
+		button:SetAttribute("NebulaRole", "Field")
+		button:SetAttribute("NebulaDepth", self:_depth())
 		bindHover(button, registry, self:_fieldColor(), self:_fieldHover())
 
 		registry:Add(button.MouseButton1Click:Connect(function()
@@ -2567,13 +2879,13 @@ function Container:Dropdown(text, options, default, callback)
 
 	local scroller = new("ScrollingFrame", {
 		Name = "Options",
-		Active = false,
+		Active = true,
 		AutomaticCanvasSize = Enum.AutomaticSize.Y,
 		BackgroundTransparency = 1,
 		BorderSizePixel = 0,
 		CanvasSize = UDim2.new(),
-		ScrollBarImageColor3 = PALETTE.Border,
-		ScrollBarThickness = 2,
+		ScrollBarImageColor3 = PALETTE.Knob,
+		ScrollBarThickness = 3,
 		ScrollingDirection = Enum.ScrollingDirection.Y,
 		Size = UDim2.fromScale(1, 1),
 		Parent = list,
@@ -2774,6 +3086,8 @@ function Container:Dropdown(text, options, default, callback)
 		applySelectionVisual()
 	end
 
+	field:SetAttribute("NebulaRole", "Field")
+	field:SetAttribute("NebulaDepth", self:_depth())
 	bindHover(field, registry, self:_fieldColor(), self:_fieldHover())
 
 	registry:Add(field.MouseButton1Click:Connect(function()
@@ -2922,17 +3236,17 @@ function Container:Slider(text, minimum, maximum, default, step, callback, optio
 	})
 	corner(track, METRICS.SmallCorner)
 
+	-- the bar itself is invisible: only the accent fill, the knob and their
+	-- shadows are drawn, which keeps the slider floating and clean
 	local bar = new("Frame", {
 		Name = "Bar",
 		AnchorPoint = Vector2.new(0, 0.5),
-		BackgroundColor3 = PALETTE.Track,
+		BackgroundTransparency = 1,
 		BorderSizePixel = 0,
 		Position = UDim2.new(0, 0, 0.5, 0),
 		Size = UDim2.new(1, 0, 0, 6),
 		Parent = track,
 	})
-	corner(bar, 3)
-	stroke(bar, PALETTE.BorderSoft)
 
 	local fill = new("Frame", {
 		Name = "Fill",
@@ -2941,6 +3255,19 @@ function Container:Slider(text, minimum, maximum, default, step, callback, optio
 		Parent = bar,
 	})
 	corner(fill, 3)
+
+	-- the fill casts its own soft shadow, so the accent strip floats too
+	local fillShadow = new("Frame", {
+		Name = "FillShadow",
+		BackgroundColor3 = Color3.new(0, 0, 0),
+		BackgroundTransparency = 0.45,
+		BorderSizePixel = 0,
+		Position = UDim2.fromOffset(0, 2),
+		Size = UDim2.fromScale(0, 1),
+		ZIndex = 0,
+		Parent = bar,
+	})
+	corner(fillShadow, 3)
 
 	local knob = new("Frame", {
 		Name = "Knob",
@@ -2953,6 +3280,21 @@ function Container:Slider(text, minimum, maximum, default, step, callback, optio
 		Parent = bar,
 	})
 	corner(knob, 7)
+
+	-- a soft dark disc just under the knob lifts it off the bar; it travels
+	-- with the knob exactly the way the glow stack does
+	local knobShadow = new("Frame", {
+		Name = "KnobShadow",
+		AnchorPoint = Vector2.new(0.5, 0.5),
+		BackgroundColor3 = Color3.new(0, 0, 0),
+		BackgroundTransparency = 0.4,
+		BorderSizePixel = 0,
+		Position = UDim2.new(0, 0, 0.5, 2),
+		Size = UDim2.fromOffset(18, 18),
+		ZIndex = 1,
+		Parent = bar,
+	})
+	corner(knobShadow, 8)
 
 	-- Real glow, not one washed out ring: five progressively larger and fainter
 	-- circles stacked behind the knob give a soft radial falloff, and the whole
@@ -2988,6 +3330,7 @@ function Container:Slider(text, minimum, maximum, default, step, callback, optio
 
 	window:BindAccent(registry, function(accent)
 		fill.BackgroundColor3 = accent
+		knob.BackgroundColor3 = accent
 		for _, ring in ipairs(glowRings) do
 			ring.BackgroundColor3 = accent
 		end
@@ -3005,18 +3348,23 @@ function Container:Slider(text, minimum, maximum, default, step, callback, optio
 	local function applyVisual(smooth)
 		local alpha = alphaOf(value)
 		local knobPosition = UDim2.new(alpha, 0, 0.5, 0)
+		local shadowPosition = UDim2.new(alpha, 0, 0.5, 2)
 		-- a very short tween while dragging keeps the knob glued to the pointer
 		-- but still glides instead of stepping frame to frame
 		local duration = dragging and ANIM.Drag or ANIM.Fast
 		readout.Text = formatNumber(value, decimals) .. suffix
 		if smooth then
 			tween(fill, duration, { Size = UDim2.fromScale(alpha, 1) })
+			tween(fillShadow, duration, { Size = UDim2.fromScale(alpha, 1) })
 			tween(knob, duration, { Position = knobPosition })
 			tween(glow, duration, { Position = knobPosition })
+			tween(knobShadow, duration, { Position = shadowPosition })
 		else
 			fill.Size = UDim2.fromScale(alpha, 1)
+			fillShadow.Size = UDim2.fromScale(alpha, 1)
 			knob.Position = knobPosition
 			glow.Position = knobPosition
+			knobShadow.Position = shadowPosition
 		end
 	end
 
@@ -3173,6 +3521,8 @@ function Container:Keybind(text, defaultKey, changedCallback, pressedCallback)
 	})
 	corner(display, METRICS.SmallCorner)
 	stroke(display, PALETTE.BorderSoft)
+	display:SetAttribute("NebulaRole", "Field")
+	display:SetAttribute("NebulaDepth", self:_depth())
 
 	local function refresh()
 		display.Text = listening and "..." or keyLabel(key)
@@ -3280,6 +3630,9 @@ function Container:Textbox(text, default, placeholder, callback)
 	corner(box, METRICS.SmallCorner)
 	local outline = stroke(box, PALETTE.Border)
 	pad(box, 0, 6, 0, 7)
+	box.BackgroundColor3 = self:_fieldColor()
+	box:SetAttribute("NebulaRole", "Field")
+	box:SetAttribute("NebulaDepth", self:_depth())
 
 	local value = box.Text
 
@@ -3322,8 +3675,9 @@ end
 -- colour field (hex text + live swatch)
 -- =====================================================================
 
-function Container:Color(text, defaultColor, defaultAlpha, callback)
+function Container:Color(text, defaultColor, defaultAlpha, callback, options)
 	local element, holder, registry = baseElement(self, "Color")
+	options = type(options) == "table" and options or {}
 
 	local color = typeof(defaultColor) == "Color3" and defaultColor or Color3.fromRGB(255, 255, 255)
 	local alpha = math.clamp(tonumber(defaultAlpha) or 1, 0, 1)
@@ -3380,6 +3734,14 @@ function Container:Color(text, defaultColor, defaultAlpha, callback)
 
 	applyVisual()
 
+	-- FollowAccent pins the field to the window accent, so it visibly tracks
+	-- the active theme (it stays silent, so no callback loops back)
+	if options.FollowAccent then
+		self.window:BindAccent(registry, function(accent)
+			setColor(accent, nil, true)
+		end)
+	end
+
 	element._tooltipTarget = swatch
 	element.Field = swatch
 
@@ -3421,7 +3783,13 @@ function NebulaUI:Demo()
 	local function feature(container, name, build)
 		-- a plain left click switches the feature on: its label lights from grey
 		-- to white and the panel header counts it. The chevron opens the block.
-		local row = container:Feature(name, false)
+		local row = container:Feature(name, false, function(on)
+			window:Notify({
+				Title = name,
+				Content = on and "Enabled" or "Disabled",
+				Duration = 2.5,
+			})
+		end)
 		local menu = row:Submenu()
 		if build then
 			build(menu)
@@ -3558,11 +3926,31 @@ function NebulaUI:Demo()
 	end)
 
 	local menuPanel = window:CreatePanel({ Title = "Menu", Subtitle = "Appearance" })
-	menuPanel:Dropdown("Theme", { "Phantom", "Slate", "Midnight" }, "Phantom")
-	menuPanel:Color("Main accent", Color3.fromRGB(208, 208, 218), 1, function(color)
-		window:SetAccent(color)
+	local accentLabel = menuPanel:Label("This label and the accent field follow the theme")
+	menuPanel:Dropdown("Theme", {
+		"Phantom", "Midnight", "Crimson", "Kyoto", "Emerald",
+		"Violet", "Ocean", "Amber", "Mono",
+	}, "Phantom", function(themeName)
+		window:SetTheme(themeName)
+		print("[Nebula] Theme:", themeName)
 	end)
+	menuPanel:Color("Main accent", Color3.fromRGB(214, 214, 255), 1, function(color)
+		window:SetAccent(color)
+	end, { FollowAccent = true })
 	menuPanel:Color("Scroll accent", Color3.fromRGB(224, 224, 235), 1)
+
+	-- the accent label tracks the active theme
+	window:BindAccent(nil, function(accent)
+		accentLabel.TextLabel.TextColor3 = accent
+	end)
+
+	menuPanel:Button("Test notification", function()
+		window:Notify({
+			Title = "Nebula",
+			Content = "Notifications are themed and expire on their own.",
+			Duration = 4,
+		})
+	end)
 	menuPanel:Keybind("Menu key", Enum.KeyCode.LeftShift, function(newKey)
 		window:SetToggleKey(newKey)
 	end)
