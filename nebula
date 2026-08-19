@@ -1,6 +1,6 @@
 --[==[
 
-	NebulaUI v1.30.0 — a compact, panel-based UI library for Roblox (Luau)
+	NebulaUI v1.31.0 — a compact, panel-based UI library for Roblox (Luau)
 	======================================================================
 
 	Original implementation. No external dependencies, no image assets, no HTTP
@@ -16,7 +16,8 @@
 		local window = library:CreateWindow({
 			Title = "Nebula",
 			Subtitle = "Settings",
-			Accent = Color3.fromRGB(214, 214, 255),
+			Theme = "Phantom",                   -- applied on creation, see THEMES
+			Accent = Color3.fromRGB(214, 214, 255), -- overrides the theme accent
 			StartPosition = UDim2.fromOffset(24, 24),
 			ToggleKey = Enum.KeyCode.RightShift, -- hide/show the interface
 			ModuleList = true,                   -- HUD arraylist, top-right
@@ -80,7 +81,10 @@
 
 	THEMES
 	----------------------------------------------------------------------
-	Phantom · Midnight · Crimson · Kyoto · Emerald · Violet · Ocean · Amber · Mono
+    Phantom · Casual · Midnight · Crimson · Kyoto · Emerald · Violet · Ocean
+    Amber · Mono
+    Every theme drives the HUD arraylist spectrum from its own Accent. Mono is
+    the only theme with a deliberate black/white arraylist.
 		window:SetTheme("Crimson")
 	Register your own before use:
 		library.Themes.Sakura = {
@@ -109,7 +113,7 @@ local UserInputService = game:GetService("UserInputService")
 local TextService = game:GetService("TextService")
 
 local NebulaUI = {}
-NebulaUI.Version = "1.30.0"
+NebulaUI.Version = "1.31.0"
 NebulaUI.GuiName = "NebulaUI"
 
 -- =====================================================================
@@ -236,11 +240,12 @@ local HUD_GLOW_OFFSETS = {
 	Vector2.new(1, -1), Vector2.new(-1, -1),
 }
 
--- No second theme table: coloured themes still derive from the shared Accent.
--- Phantom and Mono deliberately switch to an animated black/white spectrum.
+-- No second theme table: every theme derives its arraylist spectrum from the
+-- shared Accent. Mono is the only theme that deliberately animates a
+-- black/white spectrum, because its accent is literally colourless.
 local function buildHudPalette(accent, themeName)
 	local key = string.lower(tostring(themeName or ""))
-	if key == "phantom" or key == "mono" then
+	if key == "mono" then
 		return {
 			Color3.fromRGB(8, 8, 10),
 			Color3.fromRGB(62, 62, 68),
@@ -253,14 +258,47 @@ local function buildHudPalette(accent, themeName)
 	end
 
 	local hue, saturation, value = accent:ToHSV()
-	if saturation < 0.08 then
+
+	-- A genuinely colourless accent has no hue to rotate or deepen, so keep the
+	-- neutral ramp for it rather than inventing a red from hue 0.
+	if saturation < 0.02 then
 		return {
-			accent:Lerp(Color3.new(0, 0, 0), 0.45),
+			accent:Lerp(Color3.new(0, 0, 0), 0.62),
+			accent:Lerp(Color3.new(0, 0, 0), 0.28),
 			accent,
-			accent:Lerp(Color3.new(1, 1, 1), 0.35),
-			accent:Lerp(Color3.new(1, 1, 1), 0.58),
-			accent:Lerp(Color3.new(0, 0, 0), 0.22),
+			Color3.new(1, 1, 1),
 			accent,
+			accent:Lerp(Color3.new(0, 0, 0), 0.28),
+			accent:Lerp(Color3.new(0, 0, 0), 0.62),
+		}
+	end
+
+	-- Pale accents (Phantom's lavender, Casual's soft slate) carry too little
+	-- saturation for hue shifting to read as colour at all — rotating a 0.16
+	-- saturation hue just produces more grey, which is why the HUD used to look
+	-- black/white while the menu looked purple. Animate accent -> white with a
+	-- deepened, saturation-boosted low end instead, so the arraylist keeps the
+	-- menu's tint.
+	if saturation < 0.34 then
+		local deep = Color3.fromHSV(
+			hue,
+			math.clamp(saturation * 2.8, 0, 1),
+			math.clamp(value * 0.70, 0, 1)
+		)
+		local mid = Color3.fromHSV(
+			hue,
+			math.clamp(saturation * 1.7, 0, 1),
+			math.clamp(value * 0.94, 0, 1)
+		)
+		return {
+			deep,
+			mid,
+			accent,
+			accent:Lerp(Color3.new(1, 1, 1), 0.55),
+			Color3.new(1, 1, 1),
+			accent,
+			mid,
+			deep,
 		}
 	end
 
@@ -379,6 +417,16 @@ local THEMES = {
 		Header = Color3.fromRGB(15, 15, 19),
 		Layers = { Color3.fromRGB(15, 15, 19), Color3.fromRGB(19, 19, 24) },
 		Popup = Color3.fromRGB(22, 22, 27),
+	},
+	-- Casual: the relaxed, low-contrast counterpart to Phantom. Slightly lifted
+	-- surfaces and a soft periwinkle-slate accent, so nothing shouts. Its low
+	-- saturation routes the arraylist through the accent -> white ramp.
+	Casual = {
+		Accent = Color3.fromRGB(188, 204, 230),
+		Panel = Color3.fromRGB(17, 18, 22),
+		Header = Color3.fromRGB(22, 24, 29),
+		Layers = { Color3.fromRGB(22, 24, 29), Color3.fromRGB(27, 29, 35) },
+		Popup = Color3.fromRGB(31, 33, 40),
 	},
 	Midnight = {
 		Accent = Color3.fromRGB(124, 160, 255),
@@ -1389,6 +1437,16 @@ function NebulaUI:CreateWindow(options)
 		window:_refreshModuleGradient()
 		window:_refreshModules()
 	end)
+
+	-- A Theme passed straight to CreateWindow used to be recorded without ever
+	-- being painted, so the panels kept the default surfaces. Apply it here, and
+	-- let an explicitly supplied Accent still win over the theme's own accent.
+	if type(options.Theme) == "string" then
+		window:SetTheme(options.Theme)
+		if typeof(options.Accent) == "Color3" then
+			window:SetAccent(options.Accent)
+		end
+	end
 
 	return window
 end
@@ -5000,8 +5058,8 @@ function NebulaUI:Demo()
 	local menuPanel = window:CreatePanel({ Title = "Menu", Subtitle = "Appearance" })
 	local accentLabel = menuPanel:Label("This label and the accent field follow the theme")
 	local demoTheme = menuPanel:Dropdown("Theme", {
-		"Phantom", "Midnight", "Crimson", "Kyoto", "Emerald",
-		"Violet", "Ocean", "Amber", "Mono",
+		"Phantom", "Casual", "Midnight", "Crimson", "Kyoto",
+		"Emerald", "Violet", "Ocean", "Amber", "Mono",
 	}, "Phantom", function(themeName)
 		window:SetTheme(themeName)
 		print("[Nebula] Theme:", themeName)
