@@ -1,22 +1,115 @@
---[[
-	NebulaUI - a compact, panel-based UI library for Roblox (Luau).
-	---------------------------------------------------------------
-	Original implementation. No external dependencies, no image assets,
-	no HTTP requests, no filesystem access and no executor-only globals.
+--[==[
 
-	The file returns the library table so it can be hosted and loaded:
+	NebulaUI v1.30.0 — a compact, panel-based UI library for Roblox (Luau)
+	======================================================================
+
+	Original implementation. No external dependencies, no image assets, no HTTP
+	requests, no filesystem access and no executor-only globals. Only normal
+	client UI APIs: Instance.new, TweenService, UserInputService, RunService,
+	Players.LocalPlayer.PlayerGui.
+
+	LOADING
+	----------------------------------------------------------------------
+	Host this file anywhere raw text is served, then:
 
 		local library = loadstring(game:HttpGet("YOUR_RAW_LIBRARY_URL"))()
-		local window = library:CreateWindow({ Title = "Nebula", Subtitle = "Settings" })
-]]
+		local window = library:CreateWindow({
+			Title = "Nebula",
+			Subtitle = "Settings",
+			Accent = Color3.fromRGB(214, 214, 255),
+			StartPosition = UDim2.fromOffset(24, 24),
+			ToggleKey = Enum.KeyCode.RightShift, -- hide/show the interface
+			ModuleList = true,                   -- HUD arraylist, top-right
+			ModuleListBar = true,                -- thin theme-gradient separator
+			ModuleListGlow = true,               -- theme-coloured text/bar bloom
+			ModuleListBlur = true,               -- contained frosted fallback layer
+			HudFont = "GothamMedium",            -- geometric semi-bold arraylist face
+		})
+
+	FEATURE ROWS
+	----------------------------------------------------------------------
+	A panel is a list of features. Left click switches a feature on — its label
+	lifts grey -> white, the row takes a faint accent tint, the header counter
+	goes up and it appears in the module list. The chevron, or a right click,
+	opens its settings block:
+
+		local legit = window:CreatePanel({ Title = "Legit" })
+		local mlg = legit:Feature("Auto MLG", false, function(on) print(on) end)
+		local settings = mlg:Submenu()
+		settings:Slider("Min Fall Distance", 0, 20, 3, 1, nil, { Suffix = " blocks" })
+		settings:Dropdown("Clutch Item", { "Water Bucket", "Powder Snow Bucket" }, "Water Bucket")
+
+	EVERY ELEMENT
+	----------------------------------------------------------------------
+	Label(text) · Warning(text) · Divider()
+	Button(text, callback) · Buttons({ { label, callback }, ... })
+	Row(text, callback) · Feature(text, default, callback)
+	Toggle(text, default, callback)
+	Dropdown(text, options, default, callback)
+	Slider(text, min, max, default, step, callback, { Suffix, Decimals })
+	Keybind(text, defaultKey, changedCallback, pressedCallback)
+	Textbox(text, default, placeholder, callback)
+	Color(text, defaultColor, defaultAlpha, callback, { FollowAccent = true })
+
+	Every element supports:
+		Get() · Set(value, silent) · SetVisible(bool) · IsVisible()
+		Tooltip("description") · Tooltip(title, description, hint) · Destroy()
+	Extras:
+		Color:    GetAlpha() · GetHex()
+		Dropdown: SetOptions(options, keepCurrentValue) · Open() · Close() · IsOpen()
+		Slider:   SetRange(min, max)
+		Keybind:  IsListening() · StartListening() · (Escape clears the bind)
+		Feature:  SetText(text) · SetBadge("100 ms") · BindBadge(slider, "%s ms")
+		Rows with Submenu(): SetSubmenuOpen(bool) · ToggleSubmenu() · HasSubmenu()
+
+	WINDOW
+	----------------------------------------------------------------------
+	SetAccent(color) / GetAccent()
+	SetTheme(name) / GetTheme()              -- repaints the whole UI live
+	Notify({ Title, Content, Duration })     -- themed card, bottom-right, expire bar
+	SetModuleListVisible(bool) / IsModuleListVisible()
+	SetModuleListBarVisible(bool) / IsModuleListBarVisible()
+	SetModuleListGlowEnabled(bool) / IsModuleListGlowEnabled()
+	SetModuleListBlurEnabled(bool) / IsModuleListBlurEnabled()
+	-- The HUD arraylist and the notifications live in their own ScreenGui: they
+	-- ignore the topbar inset, so they sit at the true screen edge, and they
+	-- stay on screen while the menu itself is hidden.
+	SetVisible(bool) / ToggleVisible() / IsVisible()
+	SetToggleKey(Enum.KeyCode or nil)        -- rebindable with a Keybind element too
+	ClosePopups() · Destroy()                -- Destroy removes every connection
+
+	THEMES
+	----------------------------------------------------------------------
+	Phantom · Midnight · Crimson · Kyoto · Emerald · Violet · Ocean · Amber · Mono
+		window:SetTheme("Crimson")
+	Register your own before use:
+		library.Themes.Sakura = {
+			Accent = Color3.fromRGB(255, 170, 200),
+			Panel  = Color3.fromRGB(15, 11, 13),
+			Header = Color3.fromRGB(20, 14, 17),
+			Layers = { Color3.fromRGB(20, 14, 17), Color3.fromRGB(25, 18, 22) },
+			Popup  = Color3.fromRGB(29, 21, 26),
+		}
+
+	CLEANUP & ENVIRONMENT
+	----------------------------------------------------------------------
+	window:Destroy() removes the ScreenGui and disconnects every listener,
+	follow loop and timer — nothing global is left behind. Client only:
+	LocalScript, ModuleScript required from one, or an executor with
+	loadstring + game:HttpGet. ResetOnSpawn = false keeps the UI alive
+	through respawns. This file contains no loadstring, HttpGet, writefile
+	or asset ids of its own.
+
+]==]
 
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
 local TweenService = game:GetService("TweenService")
 local UserInputService = game:GetService("UserInputService")
+local TextService = game:GetService("TextService")
 
 local NebulaUI = {}
-NebulaUI.Version = "1.12.0"
+NebulaUI.Version = "1.30.0"
 NebulaUI.GuiName = "NebulaUI"
 
 -- =====================================================================
@@ -56,6 +149,24 @@ local function pickFont(...)
 	return Enum.Font.Gotham
 end
 
+-- Accepts an Enum.Font, a font name, or nil to keep the supplied default.
+-- The HUD prefers Montserrat when available, then Gotham Medium: both are
+-- compact geometric semi-bold faces that remain smooth at small UI sizes.
+local function resolveFontOption(value, default)
+	if typeof(value) == "EnumItem" then
+		return value
+	end
+	if type(value) == "string" then
+		local ok, font = pcall(function()
+			return Enum.Font[value]
+		end)
+		if ok and font then
+			return font
+		end
+	end
+	return default
+end
+
 local METRICS = {
 	PanelWidth = 296,
 	MinPanelWidth = 220,
@@ -77,9 +188,147 @@ local METRICS = {
 	-- cleaner than thin hairlines at UI sizes
 	Font = pickFont("BuilderSansMedium", "GothamMedium", "Gotham"),
 	FontMedium = pickFont("BuilderSansBold", "GothamBold", "Gotham"),
+	-- Montserrat/Poppins-style geometric medium face for the PvP HUD.
+	FontHud = pickFont("Montserrat", "GothamMedium", "BuilderSansMedium", "Gotham"),
 	TextSize = 17,
 	SmallTextSize = 15,
 }
+
+-- Compact Minecraft PvP arraylist. The theme's existing Accent is the single
+-- colour source for the UI, text field, glow, separator and frosted tint.
+local HUD = {
+	TopMargin = 7,
+	RightMargin = 7,
+	PadX = 6,
+	PadY = 4,
+	SegmentCorner = 5,
+	FrostBleed = 1,
+	LineHeight = 22,
+	LineGap = 0,
+	BadgeGap = 4,
+	TextSize = 17,
+	BadgeSize = 17,
+	BadgeColor = Color3.fromRGB(168, 168, 178),
+	BadgeTransparency = 0.04,
+	BackgroundTransparency = 0.38,
+	FrostTransparency = 0.82,
+	GlowTransparency = 0.82,
+	TextShadowNear = 0.34,
+	TextShadowFar = 0.76,
+	BarWidth = 5,
+	BarGap = 0,
+	ChromaStops = 9,
+	ChromaSpeed = 0.68,
+	ChromaAmplitude = 54,
+	ChromaXFrequency = 0.0028,
+	ChromaYFrequency = 0.0062,
+	WaveFrequency = 0.038,
+	WaveDistortion = 0.068,
+	UpdateRate = 1 / 60,
+	EnterSlide = 20,
+	ExitSlide = 30,
+}
+
+local HUD_GLOW_OFFSETS = {
+	Vector2.new(1, 0), Vector2.new(-1, 0),
+	Vector2.new(0, 1), Vector2.new(0, -1),
+	Vector2.new(1, 1), Vector2.new(-1, 1),
+	Vector2.new(1, -1), Vector2.new(-1, -1),
+}
+
+-- No second theme table: coloured themes still derive from the shared Accent.
+-- Phantom and Mono deliberately switch to an animated black/white spectrum.
+local function buildHudPalette(accent, themeName)
+	local key = string.lower(tostring(themeName or ""))
+	if key == "phantom" or key == "mono" then
+		return {
+			Color3.fromRGB(8, 8, 10),
+			Color3.fromRGB(62, 62, 68),
+			Color3.fromRGB(178, 178, 188),
+			Color3.fromRGB(255, 255, 255),
+			Color3.fromRGB(132, 132, 142),
+			Color3.fromRGB(38, 38, 44),
+			Color3.fromRGB(5, 5, 7),
+		}
+	end
+
+	local hue, saturation, value = accent:ToHSV()
+	if saturation < 0.08 then
+		return {
+			accent:Lerp(Color3.new(0, 0, 0), 0.45),
+			accent,
+			accent:Lerp(Color3.new(1, 1, 1), 0.35),
+			accent:Lerp(Color3.new(1, 1, 1), 0.58),
+			accent:Lerp(Color3.new(0, 0, 0), 0.22),
+			accent,
+		}
+	end
+
+	local palette = {}
+	local definitions = {
+		{ Shift = 0, Saturation = 1.00, Value = 0.88 },
+		{ Shift = -0.015, Saturation = 0.98, Value = 1.00 },
+		{ Shift = -0.035, Saturation = 0.88, Value = 1.00 },
+		{ Shift = -0.060, Saturation = 0.78, Value = 1.00 },
+		{ Shift = -0.038, Saturation = 0.92, Value = 0.96 },
+		{ Shift = -0.014, Saturation = 0.86, Value = 1.00 },
+		{ Shift = 0, Saturation = 1.00, Value = 0.92 },
+	}
+	for _, definition in ipairs(definitions) do
+		table.insert(palette, Color3.fromHSV(
+			(hue + definition.Shift) % 1,
+			math.clamp(saturation * definition.Saturation, 0, 1),
+			math.clamp(value * definition.Value, 0, 1)
+		))
+	end
+	return palette
+end
+
+local function sampleHudChroma(position, palette)
+	local count = #palette
+	local wrapped = position % 1
+	local scaled = wrapped * count
+	local base = math.floor(scaled)
+	local index = base % count + 1
+	local nextIndex = index % count + 1
+	local alpha = scaled - base
+	alpha = alpha * alpha * (3 - 2 * alpha)
+	return palette[index]:Lerp(palette[nextIndex], alpha)
+end
+
+local function hudChromaAt(screenX, screenY, now, palette)
+	local verticalShift = math.sin(now * HUD.ChromaSpeed) * HUD.ChromaAmplitude
+	local shiftedY = screenY + verticalShift
+	local phase = screenX * HUD.ChromaXFrequency
+		+ shiftedY * HUD.ChromaYFrequency
+	local distortion = math.sin(
+		shiftedY * HUD.WaveFrequency + screenX * 0.011
+	) * HUD.WaveDistortion
+	distortion += math.sin(
+		screenX * 0.004 - shiftedY * 0.019
+	) * HUD.WaveDistortion * 0.45
+	return sampleHudChroma(phase + distortion, palette)
+end
+
+local function buildHudChromaSequence(guiObject, now, palette, vertical)
+	local position = guiObject and guiObject.AbsolutePosition or Vector2.zero
+	local size = guiObject and guiObject.AbsoluteSize or Vector2.new(1, HUD.LineHeight)
+	local width = math.max(size.X, 1)
+	local height = math.max(size.Y, 1)
+	local points = {}
+	for stop = 0, HUD.ChromaStops - 1 do
+		local ratio = stop / (HUD.ChromaStops - 1)
+		local screenX = vertical and (position.X + width * 0.5)
+			or (position.X + width * ratio)
+		local screenY = vertical and (position.Y + height * ratio)
+			or (position.Y + height * 0.5)
+		table.insert(points, ColorSequenceKeypoint.new(
+			ratio,
+			hudChromaAt(screenX, screenY, now, palette)
+		))
+	end
+	return ColorSequence.new(points)
+end
 
 local ANIM = {
 	Fast = 0.14,
@@ -273,7 +522,10 @@ local function attachShadow(target, registry, options)
 
 	local function sync()
 		shadow.Position = target.Position
-		shadow.Size = target.Size
+		-- AbsoluteSize always reflects the rendered size, including the growth
+		-- AutomaticSize applies after the Size property was first read
+		local pixels = target.AbsoluteSize
+		shadow.Size = UDim2.fromOffset(pixels.X, pixels.Y)
 		shadow.Visible = target.Visible
 	end
 
@@ -281,6 +533,8 @@ local function attachShadow(target, registry, options)
 	registry:Add(target:GetPropertyChangedSignal("Position"):Connect(sync))
 	registry:Add(target:GetPropertyChangedSignal("Size"):Connect(sync))
 	registry:Add(target:GetPropertyChangedSignal("Visible"):Connect(sync))
+	-- AutomaticSize targets grow after creation; AbsoluteSize catches that
+	registry:Add(target:GetPropertyChangedSignal("AbsoluteSize"):Connect(sync))
 	sync()
 
 	return shadow
@@ -895,6 +1149,7 @@ function NebulaUI:CreateWindow(options)
 		Title = tostring(options.Title or "Nebula"),
 		Subtitle = tostring(options.Subtitle or ""),
 		Accent = typeof(options.Accent) == "Color3" and options.Accent or Color3.fromRGB(214, 214, 255),
+		_theme = type(options.Theme) == "string" and options.Theme or "Phantom",
 		Panels = {},
 		_registry = Registry.new(),
 		_accentBindings = {},
@@ -918,6 +1173,30 @@ function NebulaUI:CreateWindow(options)
 	window.Gui = gui
 	window._registry:Add(gui)
 
+	-- The HUD (arraylist + notifications) lives in its own ScreenGui. It ignores
+	-- the topbar inset, so the list sits at the true top edge of the screen, and
+	-- it is never disabled with the menu, so active modules stay on screen while
+	-- the interface is hidden.
+	local hudName = guiName .. "Hud"
+	local existingHud = playerGui:FindFirstChild(hudName)
+	if existingHud then
+		existingHud:Destroy()
+	end
+
+	local hud = new("ScreenGui", {
+		Name = hudName,
+		AutoLocalize = false,
+		DisplayOrder = (tonumber(options.DisplayOrder) or 100) + 1,
+		IgnoreGuiInset = true,
+		ResetOnSpawn = false,
+		ZIndexBehavior = Enum.ZIndexBehavior.Sibling,
+		Parent = playerGui,
+	})
+	window.Hud = hud
+	window._hudFont = resolveFontOption(options.HudFont, METRICS.FontHud)
+	window._flowExtras = {}
+	window._registry:Add(hud)
+
 	local function layer(name, zIndex)
 		return new("Frame", {
 			Name = name,
@@ -937,20 +1216,115 @@ function NebulaUI:CreateWindow(options)
 		tooltips = layer("Tooltips", 9),
 	}
 
-	-- Top-right corner: the active module list. Bottom-right: notifications.
+	-- Transparent parent: each line supplies one exact-width dark segment. The
+	-- segments touch vertically without overlap, forming a single stepped shape
+	-- that follows the text instead of a rectangular panel.
 	local moduleList = new("Frame", {
 		Name = "ModuleList",
 		AnchorPoint = Vector2.new(1, 0),
-		AutomaticSize = Enum.AutomaticSize.Y,
 		BackgroundTransparency = 1,
 		BorderSizePixel = 0,
-		Position = UDim2.new(1, -METRICS.Margin, 0, METRICS.Margin),
-		Size = UDim2.new(0, 260, 0, 0),
-		Visible = options.ModuleList ~= false,
-		Parent = window._layers.overlays,
+		ClipsDescendants = false,
+		Position = UDim2.new(1, -HUD.RightMargin, 0, HUD.TopMargin),
+		Size = UDim2.fromOffset(0, 0),
+		Visible = false,
+		ZIndex = 2,
+		Parent = hud,
 	})
-	local moduleLayout = vlist(moduleList, 2)
-	moduleLayout.HorizontalAlignment = Enum.HorizontalAlignment.Right
+	window._moduleListEnabled = options.ModuleList ~= false
+	window._moduleBarEnabled = options.ModuleListBar ~= false
+	window._moduleGlowEnabled = options.ModuleListGlow ~= false
+	window._moduleBlurEnabled = options.ModuleListBlur ~= false
+	window._moduleEntries = {}
+	window._moduleOrder = {}
+	window._hudChromaPalette = buildHudPalette(window.Accent, window._theme)
+
+	local barGlowRecords = {}
+	for index, definition in ipairs({
+		{ Width = 7, Transparency = 0.84 },
+		{ Width = 11, Transparency = 0.94 },
+	}) do
+		local glow = new("Frame", {
+			Name = "SeparatorGlow" .. index,
+			AnchorPoint = Vector2.new(0.5, 0),
+			BackgroundColor3 = Color3.new(1, 1, 1),
+			BackgroundTransparency = definition.Transparency,
+			BorderSizePixel = 0,
+			Position = UDim2.new(1, -HUD.BarWidth * 0.5, 0, 0),
+			Size = UDim2.new(0, definition.Width, 1, 0),
+			Visible = window._moduleBarEnabled and window._moduleGlowEnabled,
+			ZIndex = 8,
+			Parent = moduleList,
+		})
+		corner(glow, definition.Width * 0.5)
+		local gradient = Instance.new("UIGradient")
+		gradient.Rotation = 90
+		gradient.Color = ColorSequence.new(window.Accent)
+		gradient.Parent = glow
+		table.insert(barGlowRecords, { Frame = glow, Gradient = gradient })
+	end
+
+	local separatorBar = new("Frame", {
+		Name = "SeparatorBar",
+		AnchorPoint = Vector2.new(0.5, 0),
+		BackgroundColor3 = Color3.new(1, 1, 1),
+		BorderSizePixel = 0,
+		Position = UDim2.new(1, -HUD.BarWidth * 0.5, 0, 0),
+		Size = UDim2.new(0, HUD.BarWidth, 1, 0),
+		Visible = window._moduleBarEnabled,
+		ZIndex = 9,
+		Parent = moduleList,
+	})
+	corner(separatorBar, HUD.BarWidth * 0.5)
+	local separatorGradient = Instance.new("UIGradient")
+	separatorGradient.Rotation = 90
+	separatorGradient.Color = ColorSequence.new(window.Accent)
+	separatorGradient.Parent = separatorBar
+
+	window._moduleBar = separatorBar
+	window._moduleBarGradient = separatorGradient
+	window._moduleBarGlows = barGlowRecords
+
+	local lastHudUpdate = 0
+	window._registry:Add(RunService.RenderStepped:Connect(function()
+		local now = os.clock()
+		if now - lastHudUpdate < HUD.UpdateRate then
+			return
+		end
+		lastHudUpdate = now
+		local palette = window._hudChromaPalette or buildHudPalette(window.Accent, window._theme)
+
+		if moduleList.Visible then
+			for _, record in ipairs(window._moduleOrder) do
+				if record.NameLabel and record.NameLabel.Parent then
+					local sequence = buildHudChromaSequence(
+						record.NameLabel, now, palette, false
+					)
+					record.NameGradient.Color = sequence
+					for _, glow in ipairs(record.Glows) do
+						glow.Gradient.Color = sequence
+					end
+				end
+			end
+			if separatorBar.Visible then
+				local barSequence = buildHudChromaSequence(
+					separatorBar, now, palette, true
+				)
+				separatorGradient.Color = barSequence
+				for _, glow in ipairs(barGlowRecords) do
+					glow.Gradient.Color = barSequence
+				end
+			end
+		end
+
+		for _, gradient in ipairs(window._flowExtras) do
+			if gradient.Parent then
+				gradient.Color = buildHudChromaSequence(
+					gradient.Parent, now, palette, false
+				)
+			end
+		end
+	end))
 
 	local notices = new("Frame", {
 		Name = "Notifications",
@@ -959,10 +1333,11 @@ function NebulaUI:CreateWindow(options)
 		BackgroundTransparency = 1,
 		BorderSizePixel = 0,
 		Position = UDim2.new(1, -METRICS.Margin, 1, -METRICS.Margin),
-		Size = UDim2.new(0, 250, 0, 0),
-		Parent = window._layers.overlays,
+		Size = UDim2.new(0, 260, 0, 0),
+		ZIndex = 1,
+		Parent = hud,
 	})
-	local noticeLayout = vlist(notices, 8)
+	local noticeLayout = vlist(notices, 10)
 	noticeLayout.HorizontalAlignment = Enum.HorizontalAlignment.Right
 	noticeLayout.VerticalAlignment = Enum.VerticalAlignment.Bottom
 
@@ -1008,8 +1383,10 @@ function NebulaUI:CreateWindow(options)
 		end
 	end))
 
-	-- the module list is recoloured with every accent or theme change
+	-- refresh HUD contents after accent/theme changes; text, glow, separator
+	-- and frosted tint all derive from the same live Accent as the main UI
 	window:BindAccent(window._registry, function()
+		window:_refreshModuleGradient()
 		window:_refreshModules()
 	end)
 
@@ -1068,6 +1445,8 @@ function Window:SetVisible(visible)
 	if self.Gui then
 		self.Gui.Enabled = self._visible
 	end
+	-- the HUD ScreenGui is deliberately left alone: the arraylist and any
+	-- notifications stay on screen while the menu itself is hidden
 	return self._visible
 end
 
@@ -1161,88 +1540,535 @@ function Window:SetTheme(name)
 end
 
 function Window:SetModuleListVisible(visible)
-	if self._moduleList then
-		self._moduleList.Visible = visible and true or false
-	end
+	self._moduleListEnabled = visible and true or false
+	self:_refreshModules()
 	return self
 end
 
 function Window:IsModuleListVisible()
-	return self._moduleList and self._moduleList.Visible or false
+	return self._moduleListEnabled and true or false
 end
 
--- Rebuilds the top-right list from every feature row that is switched on.
+function Window:SetModuleListBarVisible(visible)
+	self._moduleBarEnabled = visible and true or false
+	if self._moduleBar then
+		self._moduleBar.Visible = self._moduleBarEnabled
+	end
+	for _, glow in ipairs(self._moduleBarGlows or {}) do
+		glow.Frame.Visible = self._moduleBarEnabled and self._moduleGlowEnabled
+	end
+	self:_refreshModules()
+	return self
+end
+
+function Window:IsModuleListBarVisible()
+	return self._moduleBarEnabled and true or false
+end
+
+function Window:SetModuleListGlowEnabled(visible)
+	self._moduleGlowEnabled = visible and true or false
+	for _, record in pairs(self._moduleEntries or {}) do
+		for _, glow in ipairs(record.Glows or {}) do
+			glow.Label.Visible = self._moduleGlowEnabled
+		end
+	end
+	for _, glow in ipairs(self._moduleBarGlows or {}) do
+		glow.Frame.Visible = self._moduleBarEnabled and self._moduleGlowEnabled
+	end
+	return self
+end
+
+function Window:IsModuleListGlowEnabled()
+	return self._moduleGlowEnabled and true or false
+end
+
+function Window:SetModuleListBlurEnabled(visible)
+	self._moduleBlurEnabled = visible and true or false
+	for _, record in pairs(self._moduleEntries or {}) do
+		if record.Frost then
+			record.Frost.Visible = self._moduleBlurEnabled
+		end
+	end
+	return self
+end
+
+function Window:IsModuleListBlurEnabled()
+	return self._moduleBlurEnabled and true or false
+end
+
+local function measureLineWidth(text, size, font)
+	return TextService:GetTextSize(
+		tostring(text),
+		size,
+		font or METRICS.FontMedium,
+		Vector2.new(1e6, 1e6)
+	).X
+end
+
+-- Rebuilds the shared theme palette for module names, their glow, the bar,
+-- notifications and the subtle tint in each fitted backdrop segment.
+function Window:_refreshModuleGradient()
+	local now = os.clock()
+	local palette = buildHudPalette(self.Accent, self._theme)
+	self._hudChromaPalette = palette
+	self._moduleGradientMain = buildHudChromaSequence(
+		self._moduleList, now, palette, false
+	)
+
+	for _, record in pairs(self._moduleEntries or {}) do
+		if record.Backdrop then
+			local backdropColor = Color3.fromRGB(0, 0, 0)
+				:Lerp(self.Accent, 0.025)
+			record.BackdropRounded.BackgroundColor3 = backdropColor
+			record.BackdropSquare.BackgroundColor3 = backdropColor
+		end
+		if record.Frost then
+			local frostColor = Color3.fromRGB(20, 20, 24)
+				:Lerp(self.Accent, 0.045)
+			record.FrostRounded.BackgroundColor3 = frostColor
+			record.FrostSquare.BackgroundColor3 = frostColor
+		end
+		local sequence = buildHudChromaSequence(
+			record.NameLabel, now, palette, false
+		)
+		record.NameGradient.Color = sequence
+		for _, glow in ipairs(record.Glows or {}) do
+			glow.Gradient.Color = sequence
+		end
+	end
+
+	if self._moduleBar and self._moduleBarGradient then
+		local barSequence = buildHudChromaSequence(
+			self._moduleBar, now, palette, true
+		)
+		self._moduleBarGradient.Color = barSequence
+		for _, glow in ipairs(self._moduleBarGlows or {}) do
+			glow.Gradient.Color = barSequence
+		end
+	end
+	for _, gradient in ipairs(self._flowExtras or {}) do
+		if gradient.Parent then
+			gradient.Color = buildHudChromaSequence(
+				gradient.Parent, now, palette, false
+			)
+		end
+	end
+end
+
+-- One module line. Its dark segment matches this exact line width; adjacent
+-- segments touch vertically and visually merge into a single stepped surface.
+function Window:_buildModuleLine(feature)
+	local lineHolder = new("Frame", {
+		Name = "Module",
+		AnchorPoint = Vector2.new(1, 0),
+		BackgroundTransparency = 1,
+		BorderSizePixel = 0,
+		ClipsDescendants = false,
+		ZIndex = 4,
+		Parent = self._moduleList,
+	})
+
+	local surfaceColor = Color3.fromRGB(0, 0, 0):Lerp(self.Accent, 0.025)
+	local frostColor = Color3.fromRGB(20, 20, 24):Lerp(self.Accent, 0.045)
+	local function buildLeftRoundedSurface(name, color, radius, zIndex)
+		-- CanvasGroup applies translucency once after combining the rounded plate
+		-- and square right fill, preventing a dark overlap seam.
+		local group = new("CanvasGroup", {
+			Name = name,
+			BackgroundTransparency = 1,
+			BorderSizePixel = 0,
+			GroupTransparency = 1,
+			ZIndex = zIndex,
+			Parent = lineHolder,
+		})
+		local rounded = new("Frame", {
+			Name = "LeftRoundedPlate",
+			BackgroundColor3 = color,
+			BackgroundTransparency = 0,
+			BorderSizePixel = 0,
+			Size = UDim2.fromScale(1, 1),
+			ZIndex = zIndex,
+			Parent = group,
+		})
+		corner(rounded, radius)
+		local rightSquare = new("Frame", {
+			Name = "RightSquareFill",
+			AnchorPoint = Vector2.new(1, 0),
+			BackgroundColor3 = color,
+			BackgroundTransparency = 0,
+			BorderSizePixel = 0,
+			Position = UDim2.fromScale(1, 0),
+			Size = UDim2.new(0, radius, 1, 0),
+			ZIndex = zIndex,
+			Parent = group,
+		})
+		return group, rounded, rightSquare
+	end
+
+	local frost, frostRounded, frostSquare = buildLeftRoundedSurface(
+		"FrostSegment", frostColor,
+		HUD.SegmentCorner + HUD.FrostBleed, 2
+	)
+	frost.Visible = self._moduleBlurEnabled
+	local backdrop, backdropRounded, backdropSquare = buildLeftRoundedSurface(
+		"BackdropSegment", surfaceColor, HUD.SegmentCorner, 3
+	)
+
+	local hudFont = self._hudFont or METRICS.FontHud
+	local shadows = {}
+	for index, definition in ipairs({
+		{ Offset = Vector2.new(1, 1), Rest = HUD.TextShadowNear },
+		{ Offset = Vector2.new(2, 2), Rest = HUD.TextShadowFar },
+	}) do
+		local shadowLabel = makeText({
+			Name = "LetterShadow" .. index,
+			AnchorPoint = Vector2.new(1, 0),
+			Font = hudFont,
+			Position = UDim2.new(1, 0, 0, 0),
+			Size = UDim2.new(1, 0, 1, 0),
+			TextColor3 = Color3.new(0, 0, 0),
+			TextSize = HUD.TextSize,
+			TextTransparency = 1,
+			TextXAlignment = Enum.TextXAlignment.Right,
+			ZIndex = 5,
+			Parent = lineHolder,
+		})
+		table.insert(shadows, {
+			Label = shadowLabel,
+			Offset = definition.Offset,
+			Rest = definition.Rest,
+		})
+	end
+
+	local white = ColorSequence.new(Color3.new(1, 1, 1))
+	local glows = {}
+	for _, offset in ipairs(HUD_GLOW_OFFSETS) do
+		local ghost = makeText({
+			Name = "LetterGlow",
+			AnchorPoint = Vector2.new(1, 0),
+			Font = hudFont,
+			Position = UDim2.new(1, 0, 0, 0),
+			Size = UDim2.new(1, 0, 1, 0),
+			TextColor3 = Color3.new(1, 1, 1),
+			TextSize = HUD.TextSize,
+			TextTransparency = 1,
+			TextXAlignment = Enum.TextXAlignment.Right,
+			Visible = self._moduleGlowEnabled,
+			ZIndex = 6,
+			Parent = lineHolder,
+		})
+		local gradient = Instance.new("UIGradient")
+		gradient.Rotation = 0
+		gradient.Color = self._moduleGradientMain or white
+		gradient.Parent = ghost
+		table.insert(glows, {
+			Label = ghost,
+			Gradient = gradient,
+			Offset = offset,
+			Rest = HUD.GlowTransparency,
+		})
+	end
+
+	local nameLabel = makeText({
+		Name = "Name",
+		AnchorPoint = Vector2.new(1, 0),
+		Font = hudFont,
+		Position = UDim2.new(1, 0, 0, 0),
+		Size = UDim2.new(1, 0, 1, 0),
+		TextColor3 = Color3.new(1, 1, 1),
+		TextSize = HUD.TextSize,
+		TextXAlignment = Enum.TextXAlignment.Right,
+		ZIndex = 7,
+		Parent = lineHolder,
+	})
+	local nameGradient = Instance.new("UIGradient")
+	nameGradient.Rotation = 0
+	nameGradient.Color = self._moduleGradientMain or white
+	nameGradient.Parent = nameLabel
+
+	return {
+		Holder = lineHolder,
+		Backdrop = backdrop,
+		BackdropRounded = backdropRounded,
+		BackdropSquare = backdropSquare,
+		Frost = frost,
+		FrostRounded = frostRounded,
+		FrostSquare = frostSquare,
+		NameLabel = nameLabel,
+		NameGradient = nameGradient,
+		Glows = glows,
+		Shadows = shadows,
+		Width = 0,
+	}
+end
+
+-- Value text uses the same font, size and baseline as the name, but stays a
+-- fixed neutral gray and never receives the themed gradient/glow.
+function Window:_syncModuleLine(record, feature)
+	local name = feature.Label.Text
+	local badge = feature._badge
+	local hudFont = self._hudFont or METRICS.FontHud
+
+	record.NameLabel.Text = name
+	for _, shadow in ipairs(record.Shadows) do
+		shadow.Label.Text = name
+	end
+
+	if badge ~= nil then
+		if not record.BadgeLabel then
+			local badgeShadows = {}
+			for index, definition in ipairs({
+				{ Offset = Vector2.new(1, 1), Rest = HUD.TextShadowNear },
+				{ Offset = Vector2.new(2, 2), Rest = HUD.TextShadowFar },
+			}) do
+				local shadow = makeText({
+					Name = "BadgeShadow" .. index,
+					AnchorPoint = Vector2.new(1, 0),
+					Font = hudFont,
+					Size = UDim2.new(1, 0, 1, 0),
+					TextColor3 = Color3.new(0, 0, 0),
+					TextSize = HUD.TextSize,
+					TextTransparency = definition.Rest,
+					TextXAlignment = Enum.TextXAlignment.Right,
+					ZIndex = 5,
+					Parent = record.Holder,
+				})
+				table.insert(badgeShadows, {
+					Label = shadow,
+					Offset = definition.Offset,
+					Rest = definition.Rest,
+				})
+			end
+
+			local badgeLabel = makeText({
+				Name = "Badge",
+				AnchorPoint = Vector2.new(1, 0),
+				Font = hudFont,
+				Position = UDim2.new(1, 0, 0, 0),
+				Size = UDim2.new(1, 0, 1, 0),
+				TextColor3 = HUD.BadgeColor,
+				TextSize = HUD.TextSize,
+				TextTransparency = HUD.BadgeTransparency,
+				TextXAlignment = Enum.TextXAlignment.Right,
+				ZIndex = 7,
+				Parent = record.Holder,
+			})
+			record.BadgeLabel = badgeLabel
+			record.BadgeShadows = badgeShadows
+		end
+		record.BadgeLabel.Text = badge
+		for _, shadow in ipairs(record.BadgeShadows) do
+			shadow.Label.Text = badge
+		end
+	elseif record.BadgeLabel then
+		record.BadgeLabel:Destroy()
+		for _, shadow in ipairs(record.BadgeShadows or {}) do
+			shadow.Label:Destroy()
+		end
+		record.BadgeLabel = nil
+		record.BadgeShadows = nil
+	end
+
+	local nameWidth = measureLineWidth(name, HUD.TextSize, hudFont)
+	local badgeWidth = badge ~= nil and measureLineWidth(badge, HUD.TextSize, hudFont) or 0
+	local gap = badge ~= nil and HUD.BadgeGap or 0
+	record.Width = math.ceil(nameWidth + badgeWidth + gap)
+
+	record.NameLabel.Size = UDim2.new(1, -(badgeWidth + gap), 1, 0)
+	record.NameLabel.Position = UDim2.new(1, -(badgeWidth + gap), 0, 0)
+	for _, shadow in ipairs(record.Shadows) do
+		shadow.Label.Size = record.NameLabel.Size
+		shadow.Label.Position = record.NameLabel.Position
+			+ UDim2.fromOffset(shadow.Offset.X, shadow.Offset.Y)
+	end
+	for _, glow in ipairs(record.Glows) do
+		glow.Label.Text = name
+		glow.Label.Size = record.NameLabel.Size
+		glow.Label.Position = record.NameLabel.Position
+			+ UDim2.fromOffset(glow.Offset.X, glow.Offset.Y)
+	end
+
+	if record.BadgeLabel then
+		record.BadgeLabel.Size = UDim2.new(0, badgeWidth, 1, 0)
+		record.BadgeLabel.Position = UDim2.new(1, 0, 0, 0)
+		for _, shadow in ipairs(record.BadgeShadows) do
+			shadow.Label.Size = record.BadgeLabel.Size
+			shadow.Label.Position = record.BadgeLabel.Position
+				+ UDim2.fromOffset(shadow.Offset.X, shadow.Offset.Y)
+		end
+	end
+end
+
+-- Reconciles active features and builds the staircase silhouette from exact
+-- text widths. Segments abut at integer row boundaries and never overlap.
 function Window:_refreshModules()
 	local holder = self._moduleList
 	if not holder then
 		return
 	end
-	for _, child in ipairs(holder:GetChildren()) do
-		if child:IsA("GuiObject") then
-			child:Destroy()
-		end
-	end
-	if not holder.Visible then
-		return
-	end
+	local entries = self._moduleEntries
 
-	local function escapeRich(text)
-		return (tostring(text):gsub("&", "&amp;"):gsub("<", "&lt;"):gsub(">", "&gt;"))
-	end
-
-	local accentHex = string.sub(colorToHex(self.Accent, 1), 1, 7)
-	local mutedHex = string.sub(colorToHex(shade(self.Accent, -0.45), 1), 1, 7)
-	local order = 0
+	local active = {}
 	for _, panel in ipairs(self.Panels) do
 		for _, feature in ipairs(panel._features or {}) do
 			if feature:Get() and feature.Label then
-				order += 1
-
-				local entry = new("Frame", {
-					Name = "Module",
-					BackgroundTransparency = 1,
-					BorderSizePixel = 0,
-					LayoutOrder = order,
-					Size = UDim2.new(1, 0, 0, METRICS.LabelHeight - 2),
-					Parent = holder,
-				})
-
-				local text = '<font color="' .. accentHex .. '">' .. escapeRich(feature.Label.Text) .. "</font>"
-				if feature._badge then
-					-- a dimmer accent suffix, like the "100 ms" readouts in the reference
-					text ..= ' <font color="' .. mutedHex .. '">' .. escapeRich(feature._badge) .. "</font>"
-				end
-
-				-- a soft accent ghost behind the sharp line reads as a glow, and
-				-- both layers fade in whenever the list rebuilds
-				local ghost = makeText({
-					Name = "Glow",
-					Font = METRICS.FontMedium,
-					Size = UDim2.new(1, 0, 1, 0),
-					Text = text,
-					TextSize = METRICS.SmallTextSize,
-					TextTransparency = 1,
-					TextXAlignment = Enum.TextXAlignment.Right,
-					Parent = entry,
-				})
-				ghost.RichText = true
-
-				local line = makeText({
-					Name = "Text",
-					Font = METRICS.FontMedium,
-					Size = UDim2.new(1, 0, 1, 0),
-					Text = text,
-					TextSize = METRICS.SmallTextSize,
-					TextTransparency = 1,
-					TextXAlignment = Enum.TextXAlignment.Right,
-					Parent = entry,
-				})
-				line.RichText = true
-
-				tween(ghost, ANIM.Normal, { TextTransparency = 0.78 })
-				tween(line, ANIM.Normal, { TextTransparency = 0 })
+				active[feature] = true
 			end
 		end
+	end
+
+	for feature, record in pairs(entries) do
+		if not active[feature] then
+			entries[feature] = nil
+			tween(record.NameLabel, ANIM.Normal, { TextTransparency = 1 })
+			for _, group in ipairs({
+				record.Glows, record.Shadows, record.BadgeShadows or {},
+			}) do
+				for _, item in ipairs(group) do
+					tween(item.Label, ANIM.Normal, { TextTransparency = 1 })
+				end
+			end
+			if record.BadgeLabel then
+				tween(record.BadgeLabel, ANIM.Normal, { TextTransparency = 1 })
+			end
+			tween(record.Backdrop, ANIM.Normal, { GroupTransparency = 1 })
+			tween(record.Frost, ANIM.Normal, { GroupTransparency = 1 })
+			local lineHolder = record.Holder
+			tween(lineHolder, ANIM.Submenu, {
+				Position = lineHolder.Position - UDim2.fromOffset(HUD.ExitSlide, 0),
+			})
+			task.delay(ANIM.Submenu + 0.04, function()
+				if lineHolder.Parent then
+					lineHolder:Destroy()
+				end
+			end)
+		end
+	end
+
+	for feature in pairs(active) do
+		local record = entries[feature]
+		if not record then
+			record = self:_buildModuleLine(feature)
+			record.IsNew = true
+			entries[feature] = record
+		end
+		self:_syncModuleLine(record, feature)
+	end
+
+	local order = {}
+	for _, record in pairs(entries) do
+		table.insert(order, record)
+	end
+	table.sort(order, function(a, b)
+		return a.Width > b.Width
+	end)
+	self._moduleOrder = order
+
+	local count = #order
+	local barRegion = self._moduleBarEnabled and (HUD.BarGap + HUD.BarWidth) or 0
+	local maxWidth = 0
+	for index, record in ipairs(order) do
+		maxWidth = math.max(maxWidth, record.Width)
+		local target = UDim2.new(
+			1,
+			-(barRegion + HUD.PadX),
+			0,
+			HUD.PadY + (index - 1) * (HUD.LineHeight + HUD.LineGap)
+		)
+		local size = UDim2.fromOffset(record.Width, HUD.LineHeight)
+		local topExtra = index == 1 and HUD.PadY or 0
+		local bottomExtra = index == count and HUD.PadY or 0
+		local segmentPosition = UDim2.new(0, -HUD.PadX, 0, -topExtra)
+		local segmentSize = UDim2.new(
+			1, HUD.PadX * 2,
+			1, topExtra + bottomExtra
+		)
+		record.Backdrop.Position = segmentPosition
+		record.Backdrop.Size = segmentSize
+		-- the frost halo bleeds one pixel beyond every rounded edge
+		local bleed = HUD.FrostBleed
+		record.Frost.Position = UDim2.new(
+			0, -HUD.PadX - bleed,
+			0, -topExtra - bleed
+		)
+		record.Frost.Size = UDim2.new(
+			1, HUD.PadX * 2 + bleed * 2,
+			1, topExtra + bottomExtra + bleed * 2
+		)
+		record.Frost.Visible = self._moduleBlurEnabled
+
+		if record.IsNew then
+			record.IsNew = nil
+			record.Holder.Position = target + UDim2.fromOffset(HUD.EnterSlide, 0)
+			record.Holder.Size = size
+			record.NameLabel.TextTransparency = 1
+			record.Backdrop.GroupTransparency = 1
+			record.Frost.GroupTransparency = 1
+			for _, group in ipairs({
+				record.Glows, record.Shadows, record.BadgeShadows or {},
+			}) do
+				for _, item in ipairs(group) do
+					item.Label.TextTransparency = 1
+				end
+			end
+			if record.BadgeLabel then
+				record.BadgeLabel.TextTransparency = 1
+			end
+
+			tween(record.NameLabel, ANIM.Normal, { TextTransparency = 0 })
+			for _, glow in ipairs(record.Glows) do
+				tween(glow.Label, ANIM.Normal, { TextTransparency = glow.Rest })
+			end
+			for _, shadow in ipairs(record.Shadows) do
+				tween(shadow.Label, ANIM.Normal, { TextTransparency = shadow.Rest })
+			end
+			if record.BadgeLabel then
+				tween(record.BadgeLabel, ANIM.Normal, {
+					TextTransparency = HUD.BadgeTransparency,
+				})
+				for _, shadow in ipairs(record.BadgeShadows or {}) do
+					tween(shadow.Label, ANIM.Normal, { TextTransparency = shadow.Rest })
+				end
+			end
+			tween(record.Backdrop, ANIM.Normal, {
+				GroupTransparency = HUD.BackgroundTransparency,
+			})
+			if self._moduleBlurEnabled then
+				tween(record.Frost, ANIM.Normal, {
+					GroupTransparency = HUD.FrostTransparency,
+				})
+			end
+		end
+		tween(record.Holder, ANIM.Normal, { Position = target, Size = size })
+	end
+
+	local contentWidth = count > 0 and math.ceil(maxWidth + HUD.PadX * 2) or 0
+	local targetWidth = contentWidth + barRegion
+	local targetHeight = count > 0
+		and math.ceil(HUD.PadY * 2 + count * HUD.LineHeight
+			+ math.max(count - 1, 0) * HUD.LineGap)
+		or 0
+	self._moduleBar.Visible = self._moduleBarEnabled
+	for _, glow in ipairs(self._moduleBarGlows or {}) do
+		glow.Frame.Visible = self._moduleBarEnabled and self._moduleGlowEnabled
+	end
+	tween(holder, ANIM.Normal, {
+		Size = UDim2.fromOffset(targetWidth, targetHeight),
+	})
+
+	if not self._moduleListEnabled then
+		holder.Visible = false
+	elseif count > 0 then
+		self._moduleHideToken = nil
+		holder.Visible = true
+	else
+		local token = {}
+		self._moduleHideToken = token
+		task.delay(ANIM.Submenu + 0.05, function()
+			if self._moduleHideToken == token and #self._moduleOrder == 0 then
+				holder.Visible = false
+			end
+		end)
 	end
 end
 
@@ -1262,34 +2088,81 @@ function Window:Notify(options)
 	local duration = math.clamp(tonumber(options.Duration) or 4, 0.5, 30)
 	self._noticeOrder = (self._noticeOrder or 0) + 1
 
-	-- a CanvasGroup lets the whole card fade in and out as one unit
-	local card = new("CanvasGroup", {
+	-- The shell carries the drop shadow: a CanvasGroup renders its children
+	-- into its own bounds, so the falloff has to live outside the card.
+	local shell = new("Frame", {
 		Name = "Notice",
 		AutomaticSize = Enum.AutomaticSize.Y,
-		BackgroundColor3 = PALETTE.Popup,
+		BackgroundTransparency = 1,
 		BorderSizePixel = 0,
-		GroupTransparency = 1,
 		LayoutOrder = self._noticeOrder,
 		Size = UDim2.new(1, 0, 0, 0),
 		Parent = holder,
 	})
+	registry:Add(shell)
+
+	local shadowPlates = {}
+	for index = 1, 2 do
+		local spread = index * 4
+		local plate = new("Frame", {
+			Name = "Plate" .. index,
+			BackgroundColor3 = Color3.new(0, 0, 0),
+			BackgroundTransparency = 1,
+			BorderSizePixel = 0,
+			Position = UDim2.fromOffset(-spread, -spread + 2),
+			Size = UDim2.new(1, spread * 2, 1, spread * 2),
+			ZIndex = 5 - index,
+			Parent = shell,
+		})
+		corner(plate, METRICS.SmallCorner + spread)
+		table.insert(shadowPlates, { Plate = plate, Rest = 0.84 + (index - 1) * 0.05 })
+	end
+
+	-- a CanvasGroup lets the whole card fade in and out as one unit
+	local card = new("CanvasGroup", {
+		Name = "Card",
+		AutomaticSize = Enum.AutomaticSize.Y,
+		BackgroundColor3 = PALETTE.Popup,
+		BorderSizePixel = 0,
+		GroupTransparency = 1,
+		Size = UDim2.new(1, 0, 0, 0),
+		ZIndex = 6,
+		Parent = shell,
+	})
 	corner(card, METRICS.SmallCorner)
-	stroke(card, PALETTE.Border)
 	card:SetAttribute("NebulaRole", "Popup")
 	registry:Add(card)
 
 	pad(card, 8, 10, 7, 10)
 	vlist(card, 5)
 
+	-- the title rides the same accent/white flow as the arraylist
 	local titleLabel = makeText({
 		Name = "Title",
-		Font = METRICS.FontMedium,
+		Font = self._hudFont or METRICS.FontHud,
 		LayoutOrder = 1,
 		Size = UDim2.new(1, 0, 0, METRICS.LabelHeight - 4),
 		Text = tostring(options.Title or "Notice"),
+		TextColor3 = Color3.new(1, 1, 1),
 		TextSize = METRICS.SmallTextSize,
 		Parent = card,
 	})
+
+	local titleGradient = Instance.new("UIGradient")
+	titleGradient.Rotation = 0
+	titleGradient.Color = self._moduleGradientMain or ColorSequence.new(self.Accent)
+	titleGradient.Parent = titleLabel
+
+	self._flowExtras = self._flowExtras or {}
+	table.insert(self._flowExtras, titleGradient)
+	registry:Add(function()
+		local extras = self._flowExtras or {}
+		for index = #extras, 1, -1 do
+			if extras[index] == titleGradient then
+				table.remove(extras, index)
+			end
+		end
+	end)
 
 	if options.Content ~= nil then
 		makeText({
@@ -1327,10 +2200,11 @@ function Window:Notify(options)
 	})
 	corner(barFill, 2)
 
-	-- themed live: title and bar follow the accent, the card follows Popup
-	window:BindAccent(registry, function(accent)
-		titleLabel.TextColor3 = shade(accent, 0.2)
+	-- themed live: the bar follows the accent, the card follows Popup, and the
+	-- title picks up the rebuilt accent/white flow
+	self:BindAccent(registry, function(accent)
 		barFill.BackgroundColor3 = accent
+		titleGradient.Color = self._moduleGradientMain or ColorSequence.new(accent)
 	end)
 
 	local dismissed = false
@@ -1340,12 +2214,18 @@ function Window:Notify(options)
 		end
 		dismissed = true
 		tween(card, ANIM.Normal, { GroupTransparency = 1 })
+		for _, plate in ipairs(shadowPlates) do
+			tween(plate.Plate, ANIM.Normal, { BackgroundTransparency = 1 })
+		end
 		task.delay(ANIM.Normal + 0.05, function()
 			registry:Destroy()
 		end)
 	end
 
 	tween(card, ANIM.Normal, { GroupTransparency = 0 })
+	for _, plate in ipairs(shadowPlates) do
+		tween(plate.Plate, ANIM.Normal, { BackgroundTransparency = plate.Rest })
+	end
 	local drain = TweenService:Create(
 		barFill,
 		TweenInfo.new(duration, Enum.EasingStyle.Linear),
@@ -1384,7 +2264,11 @@ function Window:Destroy()
 
 	self._registry:Destroy()
 	self.Gui = nil
+	self.Hud = nil
 	self._layers = nil
+	self._moduleEntries = {}
+	self._moduleOrder = {}
+	self._flowExtras = {}
 end
 
 -- =====================================================================
@@ -1396,25 +2280,44 @@ function Window:_ensureTooltip()
 		return self._tooltip
 	end
 
-	local frame = new("Frame", {
+	-- a CanvasGroup fades the whole card (background + text) with one property
+	local frame = new("CanvasGroup", {
 		Name = "Tooltip",
 		AutomaticSize = Enum.AutomaticSize.Y,
 		BackgroundColor3 = PALETTE.Tooltip,
 		BorderSizePixel = 0,
-		Size = UDim2.fromOffset(214, 0),
+		GroupTransparency = 1,
+		Size = UDim2.fromOffset(303, 0),
 		Visible = false,
 		Parent = self._layers.tooltips,
 	})
 	corner(frame, METRICS.Corner)
-	stroke(frame, PALETTE.Border)
+	local outline = stroke(frame, PALETTE.Border)
+	outline.Transparency = 0
 	pad(frame, 7, 9, 8, 9)
 	vlist(frame, 3)
+	-- compact tooltip-only shadow: a 6px maximum spread, not a large halo
+	local shadow = attachShadow(frame, self._registry, {
+		Layers = 3,
+		Step = 2,
+		Strength = 0.86,
+		Corner = METRICS.Corner,
+	})
+	local shadowPlates = {}
+	for _, plate in ipairs(shadow:GetChildren()) do
+		if plate:IsA("GuiObject") then
+			plate:SetAttribute("RestTransparency", plate.BackgroundTransparency)
+			plate.BackgroundTransparency = 1
+			table.insert(shadowPlates, plate)
+		end
+	end
 
+	-- every line sizes itself: a fixed slot would clip the row-sized title
 	local function line(order, color, size, wrapped)
 		return makeText({
-			AutomaticSize = wrapped and Enum.AutomaticSize.Y or Enum.AutomaticSize.None,
+			AutomaticSize = Enum.AutomaticSize.Y,
 			LayoutOrder = order,
-			Size = UDim2.new(1, 0, 0, wrapped and 0 or 13),
+			Size = UDim2.new(1, 0, 0, 0),
 			TextColor3 = color,
 			TextSize = size,
 			TextTruncate = Enum.TextTruncate.None,
@@ -1424,69 +2327,173 @@ function Window:_ensureTooltip()
 		})
 	end
 
+	-- the title mirrors the hovered module exactly: same family, same size
 	local title = line(1, PALETTE.Text, METRICS.TextSize, false)
-	title.Font = METRICS.FontMedium
+	title.Font = METRICS.Font
 	local description = line(2, PALETTE.SubText, METRICS.SmallTextSize, true)
-	local hint = line(3, PALETTE.SubText, METRICS.SmallTextSize, true)
+	local hint = line(3, PALETTE.Muted, METRICS.SmallTextSize, true)
 
+	-- Tooltip surfaces follow SetTheme/SetAccent immediately. The background is
+	-- the active theme's popup/panel mix; the 1px outline is a muted accent; the
+	-- shadow carries a very subtle tint from that same theme.
 	self:BindAccent(self._registry, function(accent)
-		hint.TextColor3 = accent
+		local theme = THEMES[self._theme] or THEMES.Phantom
+		local panelColor = theme.Panel or PALETTE.Panel
+		local popupColor = theme.Popup or PALETTE.Popup
+		frame.BackgroundColor3 = popupColor:Lerp(panelColor, 0.28)
+		outline.Color = PALETTE.Border:Lerp(accent, 0.32)
+		title.TextColor3 = PALETTE.Text:Lerp(accent, 0.06)
+		description.TextColor3 = PALETTE.SubText
+		hint.TextColor3 = PALETTE.Muted
+		local shadowColor = panelColor:Lerp(Color3.new(0, 0, 0), 0.58)
+		for _, plate in ipairs(shadowPlates) do
+			plate.BackgroundColor3 = shadowColor
+		end
 	end)
 
-	self._tooltip = { Instance = frame, Title = title, Description = description, Hint = hint }
+	self._tooltip = { Instance = frame, Title = title, Description = description, Hint = hint, Stroke = outline, ShadowPlates = shadowPlates, TextLabels = { title, description, hint } }
 	return self._tooltip
 end
+
+local TOOLTIP_HANDOFF = 0.045
+local TOOLTIP_TEXT_FADE = 0.06
+local TOOLTIP_CARD_FADE = 0.10
 
 function Window:ShowTooltip(target, title, description, hint)
 	if self._destroyed or not self._layers or not target then
 		return
 	end
-
-	local tip = self:_ensureTooltip()
-	tip.Title.Text = tostring(title or "")
-	tip.Title.Visible = tip.Title.Text ~= ""
-	tip.Description.Text = tostring(description or "")
-	tip.Description.Visible = tip.Description.Text ~= ""
-	tip.Hint.Text = tostring(hint or "")
-	tip.Hint.Visible = tip.Hint.Text ~= ""
-
-	if not (tip.Title.Visible or tip.Description.Visible or tip.Hint.Visible) then
-		tip.Instance.Visible = false
-		return
+	if type(hint) == "function" then
+		hint = hint()
 	end
 
+	local tip = self:_ensureTooltip()
+	local previousTarget = self._tooltipTarget
+	local switching = tip.Instance.Visible
+		and previousTarget ~= nil
+		and previousTarget ~= target
+
+	-- Every enter cancels the previous row's delayed leave. This handoff is what
+	-- keeps a sweep A -> B on the text-crossfade path instead of starting a full
+	-- card fade-out and fade-in against one another.
+	tip._hoverToken = (tip._hoverToken or 0) + 1
+	tip._fadeToken = (tip._fadeToken or 0) + 1
 	self._tooltipTarget = target
-	tip.Instance.Visible = true
+
+	local function applyText()
+		tip.Title.Text = tostring(title or "")
+		tip.Title.Visible = tip.Title.Text ~= ""
+		tip.Description.Text = tostring(description or "")
+		tip.Description.Visible = tip.Description.Text ~= ""
+		tip.Hint.Text = tostring(hint or "")
+		tip.Hint.Visible = tip.Hint.Text ~= ""
+	end
 
 	local function place()
 		if self._destroyed or self._tooltipTarget ~= target or not target.Parent then
 			return
 		end
 		local layerFrame = self._layers.tooltips
-		local origin = target.AbsolutePosition - layerFrame.AbsolutePosition
+		local mouse = Players.LocalPlayer:GetMouse()
+		local origin = Vector2.new(mouse.X, mouse.Y)
 		local size = tip.Instance.AbsoluteSize
-		local x = origin.X + target.AbsoluteSize.X + 8
-		local y = origin.Y - 2
+		local x = origin.X + 12
+		local y = origin.Y + 10
 		if x + size.X > layerFrame.AbsoluteSize.X - 4 then
-			x = origin.X - size.X - 8
+			x = origin.X - size.X - 4
+		end
+		if y + size.Y > layerFrame.AbsoluteSize.Y - 4 then
+			y = origin.Y - size.Y - 4
 		end
 		x = math.max(4, x)
-		y = math.clamp(y, 4, math.max(4, layerFrame.AbsoluteSize.Y - size.Y - 4))
-		tip.Instance.Position = UDim2.fromOffset(math.floor(x + 0.5), math.floor(y + 0.5))
+		y = math.max(4, y)
+		tip.Instance.Position = UDim2.fromOffset(
+			math.floor(x + 0.5), math.floor(y + 0.5)
+		)
 	end
 
+	if switching then
+		-- Short, tokenized text crossfade. Rapid A -> B -> C sweeps can only
+		-- commit C; stale delayed swaps return before touching the labels.
+		tip._textToken = (tip._textToken or 0) + 1
+		local textToken = tip._textToken
+		for _, label in ipairs(tip.TextLabels) do
+			tween(label, TOOLTIP_TEXT_FADE, { TextTransparency = 1 })
+		end
+		task.delay(TOOLTIP_TEXT_FADE, function()
+			if self._destroyed
+				or tip._textToken ~= textToken
+				or self._tooltipTarget ~= target then
+				return
+			end
+			applyText()
+			place()
+			for _, label in ipairs(tip.TextLabels) do
+				label.TextTransparency = 1
+				tween(label, TOOLTIP_TEXT_FADE, { TextTransparency = 0 })
+			end
+			task.defer(place)
+		end)
+		return
+	end
+
+	applyText()
+	if not (tip.Title.Visible or tip.Description.Visible or tip.Hint.Visible) then
+		tip.Instance.Visible = false
+		return
+	end
+	for _, label in ipairs(tip.TextLabels) do
+		label.TextTransparency = 0
+	end
+
+	tip.Instance.Visible = true
 	place()
-	task.defer(place) -- automatic height settles one frame later
+	tween(tip.Instance, TOOLTIP_CARD_FADE, { GroupTransparency = 0 })
+	for _, plate in ipairs(tip.ShadowPlates) do
+		tween(plate, TOOLTIP_CARD_FADE, {
+			BackgroundTransparency = plate:GetAttribute("RestTransparency") or 0.9,
+		})
+	end
+	task.defer(place)
 end
 
 function Window:HideTooltip(target)
 	if target and self._tooltipTarget ~= target then
 		return
 	end
-	self._tooltipTarget = nil
-	if self._tooltip then
-		self._tooltip.Instance.Visible = false
+	local tip = self._tooltip
+	if not tip or self._destroyed then
+		return
 	end
+
+	-- Keep the old target for a few milliseconds. If a neighbouring module is
+	-- entered, ShowTooltip increments _hoverToken and cancels this hide, letting
+	-- the text crossfade cleanly while the card stays visible.
+	local hoverToken = (tip._hoverToken or 0) + 1
+	tip._hoverToken = hoverToken
+	local leavingTarget = target or self._tooltipTarget
+	task.delay(target and TOOLTIP_HANDOFF or 0, function()
+		if self._destroyed or tip._hoverToken ~= hoverToken then
+			return
+		end
+		if leavingTarget and self._tooltipTarget ~= leavingTarget then
+			return
+		end
+
+		self._tooltipTarget = nil
+		tip._textToken = (tip._textToken or 0) + 1
+		local fadeToken = (tip._fadeToken or 0) + 1
+		tip._fadeToken = fadeToken
+		tween(tip.Instance, TOOLTIP_CARD_FADE, { GroupTransparency = 1 })
+		for _, plate in ipairs(tip.ShadowPlates) do
+			tween(plate, TOOLTIP_CARD_FADE, { BackgroundTransparency = 1 })
+		end
+		task.delay(TOOLTIP_CARD_FADE + 0.02, function()
+			if tip._fadeToken == fadeToken and self._tooltipTarget == nil then
+				tip.Instance.Visible = false
+			end
+		end)
+	end)
 end
 
 function Window:AttachTooltip(target, registry, title, description, hint)
@@ -1968,7 +2975,28 @@ local function baseElement(container, kind)
 		return holder.Visible
 	end
 
+	-- Tooltip("explanation") titles the box with the element's own label, so
+	-- a module is documented in one call. Tooltip(title, description, hint)
+	-- remains for full control.
 	function element:Tooltip(title, description, hint)
+		if description == nil and hint == nil and type(title) == "string" then
+			description = title
+			title = nil
+		end
+		if (title == nil or title == "") and self.Label and self.Label.Text ~= "" then
+			title = self.Label.Text
+		end
+		if hint == nil and (kind == "Feature" or kind == "Toggle" or kind == "Row") then
+			hint = function()
+				local hasMenu = self.HasSubmenu and self:HasSubmenu()
+				if kind == "Row" then
+					return hasMenu and "Left-click opens settings" or nil
+				end
+				return hasMenu
+					and "Left-click toggles  |  Right-click opens settings"
+					or "Left-click toggles"
+			end
+		end
 		local target = self._tooltipTarget or holder
 		if window then
 			window:AttachTooltip(target, registry, title, description, hint)
@@ -2556,12 +3584,56 @@ function Container:Feature(text, default, callback)
 		return self
 	end
 
-	-- a dimmed suffix shown after the name in the module list, e.g. "100 ms"
+	-- a grey suffix shown after the name in the module list, e.g. "100 ms"
 	function element:SetBadge(badge)
 		element._badge = badge ~= nil and tostring(badge) or nil
 		if window and window._refreshModules then
 			window:_refreshModules()
 		end
+		return self
+	end
+
+	-- pins the badge to another element's value, so the list always mirrors it:
+	-- BindBadge(slider, "%s ms") shows the slider live, e.g. "360 ms"
+	function element:BindBadge(source, format)
+		local function read()
+			local ok, value = pcall(function()
+				return source:Get()
+			end)
+			if not ok or value == nil then
+				return nil
+			end
+			if type(format) == "function" then
+				local okText, text = pcall(format, value)
+				if okText then
+					return tostring(text)
+				end
+				return tostring(value)
+			end
+			if type(format) == "string" then
+				local okText, text = pcall(string.format, format, value)
+				if okText then
+					return text
+				end
+			end
+			return tostring(value)
+		end
+
+		element:SetBadge(read())
+
+		local stopped = false
+		registry:Add(function()
+			stopped = true
+		end)
+		task.spawn(function()
+			while not stopped do
+				local text = read()
+				if text ~= element._badge then
+					element:SetBadge(text)
+				end
+				task.wait(0.1)
+			end
+		end)
 		return self
 	end
 
@@ -3927,12 +4999,25 @@ function NebulaUI:Demo()
 
 	local menuPanel = window:CreatePanel({ Title = "Menu", Subtitle = "Appearance" })
 	local accentLabel = menuPanel:Label("This label and the accent field follow the theme")
-	menuPanel:Dropdown("Theme", {
+	local demoTheme = menuPanel:Dropdown("Theme", {
 		"Phantom", "Midnight", "Crimson", "Kyoto", "Emerald",
 		"Violet", "Ocean", "Amber", "Mono",
 	}, "Phantom", function(themeName)
 		window:SetTheme(themeName)
 		print("[Nebula] Theme:", themeName)
+	end)
+	local demoArrayList = menuPanel:Toggle("Array List", true, function(on)
+		window:SetModuleListVisible(on)
+	end)
+	local demoArrayListMenu = demoArrayList:Submenu()
+	local demoArrayListBar = demoArrayListMenu:Toggle("Array List Bar", true, function(on)
+		window:SetModuleListBarVisible(on)
+	end)
+	local demoArrayListGlow = demoArrayListMenu:Toggle("Glow", true, function(on)
+		window:SetModuleListGlowEnabled(on)
+	end)
+	local demoArrayListBlur = demoArrayListMenu:Toggle("Background Blur", true, function(on)
+		window:SetModuleListBlurEnabled(on)
 	end)
 	menuPanel:Color("Main accent", Color3.fromRGB(214, 214, 255), 1, function(color)
 		window:SetAccent(color)
@@ -3961,6 +5046,7 @@ function NebulaUI:Demo()
 	end)
 
 	local configs = window:CreatePanel({ Title = "Configs", Subtitle = "Profiles" })
+	local demoProfiles = {}
 	configs:Button("Refresh list", function()
 		print("[Nebula] Config list refreshed")
 	end)
@@ -3969,9 +5055,36 @@ function NebulaUI:Demo()
 		print("[Nebula] Config name:", text)
 	end)
 	configs:Buttons({
-		{ "Load", function() print("[Nebula] Load", profile:Get()) end },
-		{ "Save", function() print("[Nebula] Save", profile:Get()) end },
-		{ "Delete", function() print("[Nebula] Delete", profile:Get()) end },
+		{ "Load", function()
+			local name = profile:Get()
+			local saved = demoProfiles[name]
+			if not saved then
+				warn("[Nebula] No saved profile:", name)
+				return
+			end
+			demoTheme:Set(saved.Theme)
+			demoArrayList:Set(saved.ArrayList)
+			demoArrayListBar:Set(saved.ArrayListBar)
+			demoArrayListGlow:Set(saved.ArrayListGlow)
+			demoArrayListBlur:Set(saved.ArrayListBlur)
+			print("[Nebula] Loaded", name)
+		end },
+		{ "Save", function()
+			local name = profile:Get()
+			demoProfiles[name] = {
+				Theme = demoTheme:Get(),
+				ArrayList = demoArrayList:Get(),
+				ArrayListBar = demoArrayListBar:Get(),
+				ArrayListGlow = demoArrayListGlow:Get(),
+				ArrayListBlur = demoArrayListBlur:Get(),
+			}
+			print("[Nebula] Saved", name)
+		end },
+		{ "Delete", function()
+			local name = profile:Get()
+			demoProfiles[name] = nil
+			print("[Nebula] Deleted", name)
+		end },
 	})
 	configs:Divider()
 	configs:Toggle("Autosave on exit", true)
