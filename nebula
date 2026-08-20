@@ -1,6 +1,6 @@
 --[==[
 
-	NebulaUI v1.31.0 — a compact, panel-based UI library for Roblox (Luau)
+	NebulaUI v1.32.0 — a compact, panel-based UI library for Roblox (Luau)
 	======================================================================
 
 	Original implementation. No external dependencies, no image assets, no HTTP
@@ -47,6 +47,7 @@
 	Row(text, callback) · Feature(text, default, callback)
 	Toggle(text, default, callback)
 	Dropdown(text, options, default, callback)
+	MultiDropdown(text, options, defaults, callback, { Max, Placeholder })
 	Slider(text, min, max, default, step, callback, { Suffix, Decimals })
 	Keybind(text, defaultKey, changedCallback, pressedCallback)
 	Textbox(text, default, placeholder, callback)
@@ -58,6 +59,8 @@
 	Extras:
 		Color:    GetAlpha() · GetHex()
 		Dropdown: SetOptions(options, keepCurrentValue) · Open() · Close() · IsOpen()
+		MultiDropdown: Get()/Set({ values }) · Select(value) · Deselect(value)
+		               Toggle(value) · Clear() · SetOptions(options, keepSelections)
 		Slider:   SetRange(min, max)
 		Keybind:  IsListening() · StartListening() · (Escape clears the bind)
 		Feature:  SetText(text) · SetBadge("100 ms") · BindBadge(slider, "%s ms")
@@ -113,7 +116,7 @@ local UserInputService = game:GetService("UserInputService")
 local TextService = game:GetService("TextService")
 
 local NebulaUI = {}
-NebulaUI.Version = "1.31.0"
+NebulaUI.Version = "1.32.0"
 NebulaUI.GuiName = "NebulaUI"
 
 -- =====================================================================
@@ -1381,7 +1384,7 @@ function NebulaUI:CreateWindow(options)
 		BackgroundTransparency = 1,
 		BorderSizePixel = 0,
 		Position = UDim2.new(1, -METRICS.Margin, 1, -METRICS.Margin),
-		Size = UDim2.new(0, 260, 0, 0),
+		Size = UDim2.new(0, 320, 0, 0),
 		ZIndex = 1,
 		Parent = hud,
 	})
@@ -2159,22 +2162,21 @@ function Window:Notify(options)
 	})
 	registry:Add(shell)
 
+	-- One tight plate gives the card depth without the oversized black halo the
+	-- old two-layer, eight-pixel spread created.
 	local shadowPlates = {}
-	for index = 1, 2 do
-		local spread = index * 4
-		local plate = new("Frame", {
-			Name = "Plate" .. index,
-			BackgroundColor3 = Color3.new(0, 0, 0),
-			BackgroundTransparency = 1,
-			BorderSizePixel = 0,
-			Position = UDim2.fromOffset(-spread, -spread + 2),
-			Size = UDim2.new(1, spread * 2, 1, spread * 2),
-			ZIndex = 5 - index,
-			Parent = shell,
-		})
-		corner(plate, METRICS.SmallCorner + spread)
-		table.insert(shadowPlates, { Plate = plate, Rest = 0.84 + (index - 1) * 0.05 })
-	end
+	local plate = new("Frame", {
+		Name = "Shadow",
+		BackgroundColor3 = Color3.new(0, 0, 0),
+		BackgroundTransparency = 1,
+		BorderSizePixel = 0,
+		Position = UDim2.fromOffset(-2, 1),
+		Size = UDim2.new(1, 4, 1, 4),
+		ZIndex = 4,
+		Parent = shell,
+	})
+	corner(plate, METRICS.SmallCorner + 2)
+	table.insert(shadowPlates, { Plate = plate, Rest = 0.9 })
 
 	-- a CanvasGroup lets the whole card fade in and out as one unit
 	local card = new("CanvasGroup", {
@@ -2188,21 +2190,23 @@ function Window:Notify(options)
 		Parent = shell,
 	})
 	corner(card, METRICS.SmallCorner)
+	local cardStroke = stroke(card, PALETTE.Border)
 	card:SetAttribute("NebulaRole", "Popup")
 	registry:Add(card)
+	registry:Add(cardStroke)
 
-	pad(card, 8, 10, 7, 10)
-	vlist(card, 5)
+	pad(card, 12, 14, 11, 14)
+	vlist(card, 8)
 
 	-- the title rides the same accent/white flow as the arraylist
 	local titleLabel = makeText({
 		Name = "Title",
 		Font = self._hudFont or METRICS.FontHud,
 		LayoutOrder = 1,
-		Size = UDim2.new(1, 0, 0, METRICS.LabelHeight - 4),
+		Size = UDim2.new(1, 0, 0, METRICS.LabelHeight),
 		Text = tostring(options.Title or "Notice"),
 		TextColor3 = Color3.new(1, 1, 1),
-		TextSize = METRICS.SmallTextSize,
+		TextSize = METRICS.TextSize + 1,
 		Parent = card,
 	})
 
@@ -2230,9 +2234,10 @@ function Window:Notify(options)
 			Size = UDim2.new(1, 0, 0, 0),
 			Text = tostring(options.Content),
 			TextColor3 = PALETTE.SubText,
-			TextSize = METRICS.SmallTextSize,
+			TextSize = METRICS.TextSize,
 			TextTruncate = Enum.TextTruncate.None,
 			TextWrapped = true,
+			LineHeight = 1.15,
 			Parent = card,
 		})
 	end
@@ -2723,12 +2728,21 @@ function Window:CreatePanel(options)
 		})
 	end
 
-	local body = new("Frame", {
+	-- The body is a real scroller. Short panels behave exactly like the old
+	-- frame, while long submenus cap at the viewport and remain reachable.
+	local body = new("ScrollingFrame", {
 		Name = "Body",
+		Active = true,
+		AutomaticCanvasSize = Enum.AutomaticSize.Y,
 		BackgroundTransparency = 1,
 		BorderSizePixel = 0,
+		CanvasSize = UDim2.new(),
 		ClipsDescendants = true,
 		Position = UDim2.fromOffset(0, METRICS.HeaderHeight),
+		ScrollBarImageColor3 = PALETTE.Knob,
+		ScrollBarImageTransparency = 0.2,
+		ScrollBarThickness = 3,
+		ScrollingDirection = Enum.ScrollingDirection.Y,
 		Size = UDim2.new(1, 0, 0, 0),
 		Parent = frame,
 	})
@@ -2749,6 +2763,13 @@ function Window:CreatePanel(options)
 
 	panel._registry:Add(panel.Layout:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(function()
 		if not panel._destroyed and not panel._collapsed and not panel._animating then
+			panel:_apply(false)
+		end
+	end))
+
+	-- Recompute the cap and clamp the panel whenever the viewport changes.
+	panel._registry:Add(self._layers.panels:GetPropertyChangedSignal("AbsoluteSize"):Connect(function()
+		if not panel._destroyed then
 			panel:_apply(false)
 		end
 	end))
@@ -2819,8 +2840,14 @@ function Panel:_apply(animate)
 		return
 	end
 
-	local bodyHeight = self._collapsed and 0 or self:_measure()
+	local measured = self:_measure()
+	local layer = self.Window and self.Window._layers and self.Window._layers.panels
+	local viewportHeight = layer and layer.AbsoluteSize.Y or (METRICS.HeaderHeight + measured)
+	local maxBodyHeight = math.max(0, viewportHeight - METRICS.HeaderHeight - 12)
+	local bodyHeight = self._collapsed and 0 or math.min(measured, maxBodyHeight)
 	local total = METRICS.HeaderHeight + bodyHeight
+	self.Body.ScrollingEnabled = not self._collapsed and measured > bodyHeight + 1
+	self.Body.ScrollBarImageTransparency = self.Body.ScrollingEnabled and 0.2 or 1
 
 	-- rotated chevrons escape the body clip, so hide them while collapsed
 	self.Body:SetAttribute(COLLAPSED_TAG, self._collapsed or nil)
@@ -2845,6 +2872,11 @@ function Panel:_apply(animate)
 	end
 
 	self:_updateFlowHeight(total)
+
+	-- Expanding near the bottom used to grow through the screen. Move only as
+	-- far as needed to keep the complete header and scrollable body visible.
+	local position = self.Instance.Position
+	self:_moveTo(position.X.Offset, position.Y.Offset)
 end
 
 function Panel:_moveTo(x, y)
@@ -4298,6 +4330,334 @@ function Container:Dropdown(text, options, default, callback)
 		return self
 	end
 
+	function element:IsOpen()
+		return open
+	end
+
+	return element
+end
+
+-- =====================================================================
+-- multi dropdown
+-- Keeps the popup open while options are toggled and returns a stable array.
+-- Signature: MultiDropdown(text, options, defaults, callback, config)
+-- config: { Max = number?, Placeholder = string? }
+-- =====================================================================
+
+function Container:MultiDropdown(text, options, defaults, callback, config)
+	config = type(config) == "table" and config or {}
+	local element, holder, registry = baseElement(self, "MultiDropdown")
+	local window = self.window
+	local maxSelected = tonumber(config.Max)
+	local placeholder = tostring(config.Placeholder or "Select options")
+
+	captionLine(holder, text, 1)
+
+	local field = makeButton({
+		Name = "Field",
+		BackgroundTransparency = 1,
+		LayoutOrder = 2,
+		Size = UDim2.new(1, 0, 0, METRICS.FieldHeight),
+		Parent = holder,
+	})
+	corner(field, METRICS.SmallCorner)
+	stroke(field, PALETTE.Border)
+	pad(field, 0, 6, 0, 7)
+
+	local valueLabel = makeText({
+		Name = "Value",
+		Size = UDim2.new(1, -14, 1, 0),
+		Text = placeholder,
+		TextTruncate = Enum.TextTruncate.AtEnd,
+		Parent = field,
+	})
+	local chevron = makeChevron(field, 8, 0, 180)
+	chevron.Instance.Position = UDim2.new(1, -7, 0.5, 0)
+	chevron:SetColor(PALETTE.Muted)
+
+	local blocker = makeButton({
+		Name = "MultiDropdownBlocker",
+		BackgroundTransparency = 1,
+		Size = UDim2.fromScale(1, 1),
+		Visible = false,
+		ZIndex = 0,
+		Parent = window._layers.popups,
+	})
+	registry:Add(blocker)
+
+	local list = new("Frame", {
+		Name = "MultiDropdownList",
+		BackgroundColor3 = PALETTE.Popup,
+		BorderSizePixel = 0,
+		ClipsDescendants = true,
+		Size = UDim2.fromOffset(180, 0),
+		Visible = false,
+		ZIndex = 2,
+		Parent = window._layers.popups,
+	})
+	list:SetAttribute("NebulaRole", "Popup")
+	corner(list, METRICS.SmallCorner)
+	stroke(list, PALETTE.Border)
+	registry:Add(list)
+	attachShadow(list, registry, { Layers = 3, Step = 2, Strength = 0.9, Corner = METRICS.SmallCorner })
+
+	local scroller = new("ScrollingFrame", {
+		Name = "Options",
+		Active = true,
+		AutomaticCanvasSize = Enum.AutomaticSize.Y,
+		BackgroundTransparency = 1,
+		BorderSizePixel = 0,
+		CanvasSize = UDim2.new(),
+		ScrollBarImageColor3 = PALETTE.Knob,
+		ScrollBarThickness = 3,
+		ScrollingDirection = Enum.ScrollingDirection.Y,
+		Size = UDim2.fromScale(1, 1),
+		Parent = list,
+	})
+	pad(scroller, 3, 3, 3, 3)
+	vlist(scroller, 2)
+
+	local values, entries, selected, order = {}, {}, {}, {}
+	local open, follow = false, nil
+
+	local function snapshot()
+		return table.clone(order)
+	end
+
+	local function refreshSummary()
+		if #order == 0 then
+			valueLabel.Text = placeholder
+			valueLabel.TextColor3 = PALETTE.Muted
+		elseif #order <= 2 then
+			valueLabel.Text = table.concat(order, ", ")
+			valueLabel.TextColor3 = PALETTE.Text
+		else
+			valueLabel.Text = string.format("%d selected", #order)
+			valueLabel.TextColor3 = PALETTE.Text
+		end
+		for _, entry in ipairs(entries) do
+			local active = selected[entry.Value] == true
+			entry.Check.Text = active and "✓" or ""
+			entry.Check.TextColor3 = active and window.Accent or PALETTE.Muted
+			entry.Button.TextColor3 = active and PALETTE.Text or PALETTE.SubText
+		end
+	end
+
+	window:BindAccent(registry, refreshSummary)
+
+	local function emit(silent)
+		refreshSummary()
+		if not silent then
+			invoke(callback, snapshot())
+		end
+		return snapshot()
+	end
+
+	local function setValues(newValues, silent)
+		table.clear(selected)
+		table.clear(order)
+		if type(newValues) == "table" then
+			for _, item in ipairs(newValues) do
+				local value = tostring(item)
+				if table.find(values, value) and not selected[value]
+					and (not maxSelected or #order < maxSelected) then
+					selected[value] = true
+					table.insert(order, value)
+				end
+			end
+		end
+		return emit(silent)
+	end
+
+	local function toggleValue(value, silent)
+		if selected[value] then
+			selected[value] = nil
+			local index = table.find(order, value)
+			if index then table.remove(order, index) end
+		elseif not maxSelected or #order < maxSelected then
+			selected[value] = true
+			table.insert(order, value)
+		else
+			return snapshot()
+		end
+		return emit(silent)
+	end
+
+	local function listHeight()
+		return math.min(#entries * 34 + math.max(#entries - 1, 0) * 2 + 6, 264)
+	end
+
+	local function listWidth()
+		local widest = 0
+		for _, value in ipairs(values) do widest = math.max(widest, #value) end
+		return math.floor(math.clamp(widest * METRICS.SmallTextSize * 0.68 + 64, 170, 340) + 0.5)
+	end
+
+	local function targetPosition()
+		local layer = window._layers and window._layers.popups
+		if not layer or not field.Parent then return nil, nil end
+		local origin = field.AbsolutePosition - layer.AbsolutePosition
+		local width, height = listWidth(), listHeight()
+		local x = origin.X + math.floor(field.AbsoluteSize.X * 0.32)
+		local y = origin.Y + math.floor(field.AbsoluteSize.Y * 0.5)
+		if x + width > layer.AbsoluteSize.X - 6 then x = layer.AbsoluteSize.X - width - 6 end
+		if y + height > layer.AbsoluteSize.Y - 6 and origin.Y - height + 4 >= 6 then
+			y = origin.Y - height + 4
+		end
+		return math.floor(math.max(6, x) + 0.5), math.floor(math.max(6, y) + 0.5)
+	end
+
+	local function updatePosition()
+		local x, y = targetPosition()
+		if x then list.Position = UDim2.fromOffset(x, y) end
+	end
+
+	local function stopFollow()
+		if follow then
+			follow:Disconnect()
+			registry:Remove(follow)
+			follow = nil
+		end
+	end
+
+	local function closeList()
+		blocker.Visible = false
+		if not open then return end
+		open = false
+		stopFollow()
+		chevron:SetOpen(false, true)
+		tween(list, ANIM.Fast, { Size = UDim2.fromOffset(math.floor(listWidth() * 0.9), 0), BackgroundTransparency = 0.3 })
+		task.delay(ANIM.Fast + 0.02, function()
+			if not open and list.Parent then list.Visible = false end
+		end)
+		window:ClearPopup(element)
+	end
+
+	local function openList()
+		if open or #entries == 0 then return end
+		open = true
+		window:RegisterPopup(element)
+		local width, height = listWidth(), listHeight()
+		local x, y = targetPosition()
+		x, y = x or 0, y or 0
+		list.Visible, blocker.Visible = true, true
+		list.Size = UDim2.fromOffset(math.floor(width * 0.9), math.floor(height * 0.5))
+		list.Position = UDim2.fromOffset(x, y - 6)
+		list.BackgroundTransparency = 0.3
+		tween(list, ANIM.Submenu, { Size = UDim2.fromOffset(width, height), Position = UDim2.fromOffset(x, y), BackgroundTransparency = 0 })
+		chevron:SetOpen(true, true)
+		task.delay(ANIM.Submenu + 0.02, function()
+			if open and not follow and list.Parent then
+				follow = registry:Add(RunService.RenderStepped:Connect(updatePosition))
+			end
+		end)
+	end
+
+	local function rebuild(newOptions)
+		for _, entry in ipairs(entries) do entry.Button:Destroy() end
+		table.clear(entries)
+		table.clear(values)
+		for index, option in ipairs(newOptions) do
+			local optionText = tostring(option)
+			values[index] = optionText
+			local button = makeButton({
+				Name = "Option", BackgroundColor3 = PALETTE.Row,
+				BackgroundTransparency = 0.4, LayoutOrder = index,
+				Size = UDim2.new(1, 0, 0, 34), Text = optionText,
+				TextColor3 = PALETTE.SubText, TextSize = METRICS.SmallTextSize,
+				Parent = scroller,
+			})
+			corner(button, METRICS.SmallCorner)
+			pad(button, 0, 28, 0, 7)
+			local check = makeText({
+				Name = "Check", AnchorPoint = Vector2.new(1, 0),
+				Position = UDim2.new(1, -7, 0, 0), Size = UDim2.fromOffset(18, 34),
+				Text = "", TextSize = METRICS.TextSize, TextXAlignment = Enum.TextXAlignment.Center,
+				Parent = button,
+			})
+			registry:Add(button.MouseButton1Click:Connect(function()
+				toggleValue(optionText, false) -- deliberately stays open
+			end))
+			registry:Add(button.MouseEnter:Connect(function()
+				tween(button, ANIM.Fast, { TextColor3 = PALETTE.Text })
+			end))
+			registry:Add(button.MouseLeave:Connect(function()
+				if not selected[optionText] then tween(button, ANIM.Fast, { TextColor3 = PALETTE.SubText }) end
+			end))
+			table.insert(entries, { Button = button, Check = check, Value = optionText })
+		end
+		-- Drop selections that no longer exist.
+		for index = #order, 1, -1 do
+			if not table.find(values, order[index]) then
+				selected[order[index]] = nil
+				table.remove(order, index)
+			end
+		end
+		refreshSummary()
+	end
+
+	field:SetAttribute("NebulaRole", "Field")
+	field:SetAttribute("NebulaDepth", self:_depth())
+	bindHover(field, registry, self:_fieldColor(), self:_fieldHover())
+	registry:Add(field.MouseButton1Click:Connect(function()
+		if open then closeList() else openList() end
+	end))
+	onRightClick(field, registry, function()
+		if open then closeList() else openList() end
+	end)
+	registry:Add(blocker.MouseButton1Click:Connect(closeList))
+	onRightClick(blocker, registry, closeList)
+	registry:Add(function()
+		open = false
+		stopFollow()
+		window:ClearPopup(element)
+	end)
+
+	rebuild(type(options) == "table" and options or {})
+	setValues(type(defaults) == "table" and defaults or {}, true)
+
+	element._tooltipTarget, element.Field, element.List = field, field, list
+	function element:Get() return snapshot() end
+	function element:Set(newValues, silent) return setValues(newValues, silent) end
+	function element:Select(value, silent)
+		value = tostring(value)
+		if not selected[value] and table.find(values, value) then return toggleValue(value, silent) end
+		return snapshot()
+	end
+	function element:Deselect(value, silent)
+		value = tostring(value)
+		if selected[value] then return toggleValue(value, silent) end
+		return snapshot()
+	end
+	function element:Toggle(value, silent)
+		value = tostring(value)
+		if table.find(values, value) then return toggleValue(value, silent) end
+		return snapshot()
+	end
+	function element:Clear(silent) return setValues({}, silent) end
+	function element:GetOptions() return table.clone(values) end
+	function element:SetOptions(newOptions, keepSelections)
+		local previous = keepSelections and snapshot() or {}
+		rebuild(type(newOptions) == "table" and newOptions or {})
+		setValues(previous, true)
+		if open then
+			if #entries == 0 then
+				closeList()
+			else
+				updatePosition()
+				list.Size = UDim2.fromOffset(listWidth(), listHeight())
+			end
+		end
+		return self
+	end
+	function element:Open()
+		openList()
+		return self
+	end
+	function element:Close()
+		closeList()
+		return self
+	end
 	function element:IsOpen()
 		return open
 	end
