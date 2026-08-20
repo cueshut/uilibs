@@ -4399,7 +4399,12 @@ function Container:MultiDropdown(text, options, defaults, callback, config)
 	corner(list, METRICS.SmallCorner)
 	stroke(list, PALETTE.Border)
 	registry:Add(list)
-	attachShadow(list, registry, { Layers = 3, Step = 2, Strength = 0.9, Corner = METRICS.SmallCorner })
+	attachShadow(list, registry, {
+		Layers = 4,
+		Step = 2,
+		Strength = 0.88,
+		Corner = METRICS.SmallCorner,
+	})
 
 	local scroller = new("ScrollingFrame", {
 		Name = "Options",
@@ -4437,9 +4442,10 @@ function Container:MultiDropdown(text, options, defaults, callback, config)
 		end
 		for _, entry in ipairs(entries) do
 			local active = selected[entry.Value] == true
-			entry.Check.Text = active and "✓" or ""
-			entry.Check.TextColor3 = active and window.Accent or PALETTE.Muted
+			-- Match Dropdown exactly: selected options are conveyed by brighter text
+			-- only. No checkmark, accent, fill or changed row background.
 			entry.Button.TextColor3 = active and PALETTE.Text or PALETTE.SubText
+			entry.Button.BackgroundTransparency = 1
 		end
 	end
 
@@ -4490,7 +4496,7 @@ function Container:MultiDropdown(text, options, defaults, callback, config)
 	local function listWidth()
 		local widest = 0
 		for _, value in ipairs(values) do widest = math.max(widest, #value) end
-		return math.floor(math.clamp(widest * METRICS.SmallTextSize * 0.68 + 64, 170, 340) + 0.5)
+		return math.floor(math.clamp(widest * METRICS.SmallTextSize * 0.68 + 48, 150, 320) + 0.5)
 	end
 
 	local function targetPosition()
@@ -4498,7 +4504,7 @@ function Container:MultiDropdown(text, options, defaults, callback, config)
 		if not layer or not field.Parent then return nil, nil end
 		local origin = field.AbsolutePosition - layer.AbsolutePosition
 		local width, height = listWidth(), listHeight()
-		local x = origin.X + math.floor(field.AbsoluteSize.X * 0.32)
+		local x = origin.X + math.floor(field.AbsoluteSize.X * 0.42)
 		local y = origin.Y + math.floor(field.AbsoluteSize.Y * 0.5)
 		if x + width > layer.AbsoluteSize.X - 6 then x = layer.AbsoluteSize.X - width - 6 end
 		if y + height > layer.AbsoluteSize.Y - 6 and origin.Y - height + 4 >= 6 then
@@ -4562,19 +4568,13 @@ function Container:MultiDropdown(text, options, defaults, callback, config)
 			values[index] = optionText
 			local button = makeButton({
 				Name = "Option", BackgroundColor3 = PALETTE.Row,
-				BackgroundTransparency = 0.4, LayoutOrder = index,
+				BackgroundTransparency = 1, LayoutOrder = index,
 				Size = UDim2.new(1, 0, 0, 34), Text = optionText,
 				TextColor3 = PALETTE.SubText, TextSize = METRICS.SmallTextSize,
 				Parent = scroller,
 			})
 			corner(button, METRICS.SmallCorner)
-			pad(button, 0, 28, 0, 7)
-			local check = makeText({
-				Name = "Check", AnchorPoint = Vector2.new(1, 0),
-				Position = UDim2.new(1, -7, 0, 0), Size = UDim2.fromOffset(18, 34),
-				Text = "", TextSize = METRICS.TextSize, TextXAlignment = Enum.TextXAlignment.Center,
-				Parent = button,
-			})
+			pad(button, 0, 6, 0, 7)
 			registry:Add(button.MouseButton1Click:Connect(function()
 				toggleValue(optionText, false) -- deliberately stays open
 			end))
@@ -4584,7 +4584,7 @@ function Container:MultiDropdown(text, options, defaults, callback, config)
 			registry:Add(button.MouseLeave:Connect(function()
 				if not selected[optionText] then tween(button, ANIM.Fast, { TextColor3 = PALETTE.SubText }) end
 			end))
-			table.insert(entries, { Button = button, Check = check, Value = optionText })
+			table.insert(entries, { Button = button, Value = optionText })
 		end
 		-- Drop selections that no longer exist.
 		for index = #order, 1, -1 do
